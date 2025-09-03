@@ -51,9 +51,6 @@
     "web": {
       "favicon": "./assets/favicon.png"
     },
-    "plugins": [
-      "react-native-maps"
-    ],
     "extra": {
       "API_BASE_URL": "https://buzzpulse.danielnwachukwu.workers.dev",
       "eas": {

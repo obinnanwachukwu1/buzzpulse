@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState, createContext, useContext } from 'react';
-import { Button, StyleSheet, Text, View, Modal, Platform, ScrollView, Pressable, Animated, PanResponder, Dimensions, Switch } from 'react-native';
+import { Button, StyleSheet, Text, View, Modal, Platform, ScrollView, Pressable, Animated, PanResponder, Dimensions, Switch, Share as NativeShare, Alert, ToastAndroid } from 'react-native';
 import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType, MapPressEvent } from 'react-native-maps';
 import { NavigationContainer } from '@react-navigation/native';
 import Constants from 'expo-constants';
@@ -33,6 +33,8 @@ import { extractPolygons, pointInPolygon } from './src/lib/pip';
 import { BUILDINGS, findNearestBuilding, findBuildingForPoint } from './src/lib/buildings';
 import LeafletMap from './src/components/LeafletMap';
 import { fetchStats } from './src/lib/api';
+import { getTopVibe, formatShare } from './src/lib/share';
+import { SHARE_URL } from './src/lib/config';
 
 function haversineMeters(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {
   const R = 6371000;
@@ -374,7 +376,36 @@ function MapScreen() {
             <ScrollView contentContainerStyle={styles.sheetContent}>
               {selectedBuilding && (
                 <View>
-                  <Text style={styles.sheetTitle}>{selectedBuilding.name}</Text>
+                  <View style={styles.sheetHeaderRow}>
+                    <Text style={[styles.sheetTitle, { flex: 1 }]} numberOfLines={2}>
+                      {selectedBuilding.name}
+                    </Text>
+                    <Pressable
+                      accessibilityRole="button"
+                      accessibilityLabel="Share building stats"
+                      onPress={async () => {
+                        if (!selectedBuilding || !selectedStats || selectedStats?.error) {
+                          if (Platform.OS === 'android') ToastAndroid.show('Stats not loaded yet', ToastAndroid.SHORT);
+                          else Alert.alert('Sharing unavailable', 'Stats not loaded yet');
+                          return;
+                        }
+                        try {
+                          const top = getTopVibe(selectedStats?.vibesLastHour);
+                          const msg = formatShare({
+                            name: selectedBuilding.name,
+                            currentPresence: Number(selectedStats.currentPresence || 0),
+                            lastHourHits: Number(selectedStats.lastHourHits || 0),
+                            topVibe: top?.[0] ?? null,
+                            link: SHARE_URL,
+                          });
+                          await NativeShare.share({ message: msg });
+                        } catch {}
+                      }}
+                      style={({ pressed }) => [{ padding: 6, opacity: pressed ? 0.7 : (!selectedStats || selectedStats?.error ? 0.5 : 1) }]}
+                    >
+                      <Ionicons name="share-outline" size={20} color={'#111'} />
+                    </Pressable>
+                  </View>
               {selectedStats ? (
                 <>
                   <View style={styles.statsGrid}>
@@ -527,6 +558,7 @@ const styles = StyleSheet.create({
   overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' },
   sheetContainer: { backgroundColor: '#fff', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 16, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '80%', height: '60%' },
   sheetContent: { paddingBottom: 12 },
+  sheetHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
   sheetTitle: { fontSize: 16, fontWeight: '600', marginBottom: 6 },
   sheetText: { fontSize: 13, color: '#333' },
   dragBar: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: '#ddd', marginBottom: 10 },

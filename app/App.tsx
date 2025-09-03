@@ -7,7 +7,6 @@ import { fetchHeat, HeatPoint } from './src/lib/api';
 import { encode as encodeGeohash } from './src/lib/geohash';
 import { ingestHit } from './src/lib/ingest';
 import campusMask from './assets/masks/campus.json';
-import residentialMask from './assets/masks/residential.json';
 import { extractPolygons, pointInPolygon } from './src/lib/pip';
 
 export default function App() {
@@ -22,18 +21,14 @@ export default function App() {
   const pulseTimer = useRef<NodeJS.Timer | null>(null);
   const [droppedCount, setDroppedCount] = useState(0);
   const [showMasks, setShowMasks] = useState(true);
+  // Include-only filter: only send hits inside campus polygons
   const [filterEnabled, setFilterEnabled] = useState(true);
   const [mapType, setMapType] = useState<MapType>('standard');
 
   const campusPolys = useMemo(() => extractPolygons(campusMask), []);
-  const residentialPolys = useMemo(() => extractPolygons(residentialMask), []);
   const campusPolysLatLng = useMemo(() =>
     campusPolys.map((poly) => poly.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))),
     [campusPolys]
-  );
-  const residentialPolysLatLng = useMemo(() =>
-    residentialPolys.map((poly) => poly.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))),
-    [residentialPolys]
   );
 
   // Default: a campus-ish location (Stanford Main Quad)
@@ -107,11 +102,10 @@ export default function App() {
       const { latitude, longitude } = loc.coords;
       const pt: [number, number] = [longitude, latitude];
 
-      // Fence to campus and skip residential (if filter enabled)
-      if (filterEnabled) {
-        const inCampus = campusPolys.length === 0 || campusPolys.some((poly) => pointInPolygon(pt, poly));
-        const inResidential = residentialPolys.some((poly) => pointInPolygon(pt, poly));
-        if (!inCampus || inResidential) {
+      // Include-only: if filter is enabled and we have campus polygons, drop points outside them
+      if (filterEnabled && campusPolys.length > 0) {
+        const inCampus = campusPolys.some((poly) => pointInPolygon(pt, poly));
+        if (!inCampus) {
           setDroppedCount((c) => c + 1);
           return; // do not send
         }
@@ -150,14 +144,11 @@ export default function App() {
           mapType={mapType}
           onRegionChangeComplete={onRegionChangeComplete}
         >
-          {/* Masks overlays (toggled) */}
+          {/* Inclusion zone overlays (toggled) */}
           {showMasks && (
             <>
               {campusPolysLatLng.map((coords, idx) => (
                 <Polygon key={`campus-${idx}`} coordinates={coords} strokeColor="#0066cc" strokeWidth={2} fillColor="rgba(0,102,204,0.07)" />
-              ))}
-              {residentialPolysLatLng.map((coords, idx) => (
-                <Polygon key={`res-${idx}`} coordinates={coords} strokeColor="#666666" strokeWidth={1} fillColor="rgba(120,120,120,0.25)" />
               ))}
             </>
           )}
@@ -185,16 +176,16 @@ export default function App() {
         </View>
       </View>
       <View style={styles.status}>
-        <Text style={styles.statusText}>Pulses sent (public): {pulseCount}</Text>
-        <Text style={styles.statusText}>Dropped (private/residential): {droppedCount}</Text>
+        <Text style={styles.statusText}>Pulses sent (in zones): {pulseCount}</Text>
+        <Text style={styles.statusText}>Dropped (outside zones): {droppedCount}</Text>
         <Text style={styles.statusText}>Last upload: {lastUpload ?? '—'}</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 12 }}>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={styles.statusText}>Show masks</Text>
+            <Text style={styles.statusText}>Show zones</Text>
             <Switch value={showMasks} onValueChange={setShowMasks} />
           </View>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={styles.statusText}>Privacy filter</Text>
+            <Text style={styles.statusText}>Limit to zones</Text>
             <Switch value={filterEnabled} onValueChange={setFilterEnabled} />
           </View>
         </View>

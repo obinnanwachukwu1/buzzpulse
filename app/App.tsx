@@ -30,7 +30,7 @@ import { fetchHeat, HeatPoint } from './src/lib/api';
 import { ingestHit } from './src/lib/ingest';
 import campusMask from './assets/masks/campus.json';
 import { extractPolygons, pointInPolygon } from './src/lib/pip';
-import { BUILDINGS, findNearestBuilding } from './src/lib/buildings';
+import { BUILDINGS, findNearestBuilding, findBuildingForPoint } from './src/lib/buildings';
 import { fetchStats } from './src/lib/api';
 
 function haversineMeters(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {

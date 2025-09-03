@@ -1,0 +1,12 @@
+# Node modules and build output
+node_modules/
+dist/
+
+# Wrangler local state and env
+.wrangler/
+.dev.vars
+
+# OS/editor noise
+.DS_Store
+*.log
+

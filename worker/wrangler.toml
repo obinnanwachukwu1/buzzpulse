@@ -5,5 +5,5 @@ compatibility_date = "2025-09-02"
 [[d1_databases]]
 binding = "DB"
 database_name = "buzzpulse_db"
-database_id = "REPLACE_ME"
+database_id = "c70dfc26-7d0a-4f6d-bc36-bf6783ad0d7c"
 

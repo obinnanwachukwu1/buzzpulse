@@ -1,0 +1,9 @@
+{
+  "name": "buzzpulse-scripts",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "osmtogeojson": "^2.2.12"
+  }
+}

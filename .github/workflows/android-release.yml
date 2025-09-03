@@ -63,3 +63,14 @@ jobs:
         with:
           name: app-release-bundle
           path: app/android/app/build/outputs/bundle/release/app-release.aab
+
+      - name: Create GitHub Release and attach AAB
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v1
+        with:
+          name: ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            app/android/app/build/outputs/bundle/release/app-release.aab

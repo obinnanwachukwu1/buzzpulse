@@ -200,11 +200,10 @@ function MapScreen() {
       const { latitude, longitude } = loc.coords;
       const pt: [number, number] = [longitude, latitude];
 
-      // Motion-aware gating (skip if still for 90s or driving fast)
+      // Motion-aware gating (skip if driving fast)
       const speed = typeof loc.coords.speed === 'number' ? loc.coords.speed : 0;
-      const still = Date.now() - lastMoveRef.current > 90_000;
       const driving = speed > 8;
-      if (still || driving) {
+      if (driving) {
         setDroppedCount((c) => c + 1);
         return;
       }
@@ -402,17 +401,21 @@ function MapScreen() {
                 <View style={{ flexDirection: 'row', gap: 18, justifyContent: 'center', marginTop: 4 }}>
                   {['👍','🔥','🎉','😴'].map((vb) => {
                     const selected = selectedStats?.myVibe === vb;
+                    const allowed = !!selectedStats?.amIPresent;
                     return (
                       <Pressable
                         key={vb}
-                        disabled={selected}
+                        disabled={selected || !allowed}
                         onPress={async () => { try { const { sendVibe } = await import('./src/lib/vibes'); await sendVibe(`b:${selectedBuilding.id}`, vb); const stats = await fetchStats(`b:${selectedBuilding.id}`); setSelectedStats(stats); } catch {} }}
-                        style={{ backgroundColor: selected ? '#dbe7ff' : '#eef1f6', width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' }}>
+                        style={{ backgroundColor: selected ? '#dbe7ff' : allowed ? '#eef1f6' : '#f1f1f1', width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center', opacity: selected || !allowed ? 0.6 : 1 }}>
                         <Text style={{ fontSize: 26 }}>{vb}</Text>
                       </Pressable>
                     );
                   })}
                 </View>
+              )}
+              {!selectedStats?.amIPresent && (
+                <Text style={{ textAlign: 'center', color: '#666', marginTop: 6 }}>Move closer and keep Pulse on to react</Text>
               )}
                   {/* swipe down or tap backdrop to close */}
                 </View>

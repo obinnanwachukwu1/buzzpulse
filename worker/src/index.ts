@@ -8,7 +8,7 @@ interface Env {
 type IngestBody = { cellId: string; ts?: number };
 
 // Presence window (seconds) to consider a device "active"
-const PRESENCE_WINDOW_SEC = 10 * 60; // 10 minutes
+const PRESENCE_WINDOW_SEC = 15 * 60; // 15 minutes (tolerant of pauses)
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -191,11 +191,15 @@ async function handleStats(req: Request, url: URL, env: Env): Promise<Response> 
   // Optional: include myVibe if signed headers present
   const myId = await requireAuthOptional(req.headers, env);
   let myVibe: string | undefined;
+  let amIPresent = false;
   if (myId) {
     const hour = nowSec - (nowSec % 3600);
     const mv = await env.DB.prepare('select vibe from vibes where cell_id=? and device_id=? and hour=?')
       .bind(cellId, myId, hour).first<{ vibe: string }>();
     myVibe = mv?.vibe;
+    const pr = await env.DB.prepare('select 1 as ok from device_presence where device_id=? and cell_id=? and updated_ts>=?')
+      .bind(myId, cellId, nowSec - PRESENCE_WINDOW_SEC).first<{ ok: number }>();
+    amIPresent = !!pr?.ok;
   }
 
   const resp: any = {
@@ -210,6 +214,7 @@ async function handleStats(req: Request, url: URL, env: Env): Promise<Response> 
     vibesLastHour,
     currentPresence: presenceRow?.c ?? 0,
     myVibe,
+    amIPresent,
   };
   resp.deltaVsTypical = (resp.lastHourHits ?? 0) - (resp.typicalHourAvgHits7d ?? 0);
   return json(resp);

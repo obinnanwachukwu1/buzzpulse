@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, StyleSheet, Text, View, Switch, Modal, Platform, ScrollView } from 'react-native';
+import { Button, StyleSheet, Text, View, Switch, Modal, Platform, ScrollView, Pressable } from 'react-native';
 import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType, MapPressEvent } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
@@ -259,30 +259,48 @@ export default function App() {
       <Modal
         visible={!!selectedBuilding}
         animationType="slide"
-        presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
+        transparent
         onRequestClose={() => { setSelectedBuilding(null); setSelectedStats(null); }}
       >
-        <ScrollView contentContainerStyle={styles.modalContainer}>
-          {selectedBuilding && (
-            <View style={styles.modalCard}>
-              <Text style={styles.sheetTitle}>{selectedBuilding.name}</Text>
-              {selectedStats ? (
-                <>
-                  <Text style={styles.sheetText}>Current score: {selectedStats.currentScore?.toFixed?.(2) ?? selectedStats.currentScore}</Text>
-                  <Text style={styles.sheetText}>Hits last hour: {selectedStats.lastHourHits}</Text>
-                  <Text style={styles.sheetText}>Typical (this hour, 7d avg): {Number(selectedStats.typicalHourAvgHits7d ?? 0).toFixed(1)}</Text>
-                  {typeof selectedStats.deltaVsTypical === 'number' && (
-                    <Text style={styles.sheetText}>Delta vs typical: {selectedStats.deltaVsTypical > 0 ? '+' : ''}{Number(selectedStats.deltaVsTypical).toFixed(1)}</Text>
+        <View style={styles.modalRoot}>
+          <Pressable style={styles.overlay} onPress={() => { setSelectedBuilding(null); setSelectedStats(null); }} />
+          <View style={styles.sheetContainer}>
+            <View style={styles.dragBar} />
+            <ScrollView contentContainerStyle={styles.sheetContent}>
+              {selectedBuilding && (
+                <View>
+                  <Text style={styles.sheetTitle}>{selectedBuilding.name}</Text>
+                  {selectedStats ? (
+                    <>
+                      <View style={styles.statsGrid}>
+                        <View style={styles.statCard}>
+                          <Text style={styles.statValue}>{(selectedStats.currentScore ?? 0).toFixed?.(2) ?? selectedStats.currentScore}</Text>
+                          <Text style={styles.statLabel}>Score</Text>
+                        </View>
+                        <View style={styles.statCard}>
+                          <Text style={styles.statValue}>{selectedStats.lastHourHits ?? 0}</Text>
+                          <Text style={styles.statLabel}>Hits (1h)</Text>
+                        </View>
+                        <View style={styles.statCard}>
+                          <Text style={styles.statValue}>{Number(selectedStats.typicalHourAvgHits7d ?? 0).toFixed(1)}</Text>
+                          <Text style={styles.statLabel}>Typical (7d avg)</Text>
+                        </View>
+                        <View style={styles.statCard}>
+                          <Text style={styles.statValue}>{(selectedStats.deltaVsTypical > 0 ? '+' : '') + Number(selectedStats.deltaVsTypical ?? 0).toFixed(1)}</Text>
+                          <Text style={styles.statLabel}>Δ vs typical</Text>
+                        </View>
+                      </View>
+                      <View style={{ height: 16 }} />
+                    </>
+                  ) : (
+                    <Text style={styles.sheetText}>Loading…</Text>
                   )}
-                </>
-              ) : (
-                <Text style={styles.sheetText}>Loading…</Text>
+                  <Button title="Close" onPress={() => { setSelectedBuilding(null); setSelectedStats(null); }} />
+                </View>
               )}
-              <View style={{ height: 12 }} />
-              <Button title="Close" onPress={() => { setSelectedBuilding(null); setSelectedStats(null); }} />
-            </View>
-          )}
-        </ScrollView>
+            </ScrollView>
+          </View>
+        </View>
       </Modal>
       <StatusBar style="dark" />
     </View>
@@ -315,8 +333,15 @@ const styles = StyleSheet.create({
   },
   statusText: { fontSize: 12, color: '#333' },
   error: { position: 'absolute', bottom: 20, left: 16, right: 16, color: 'crimson' },
-  modalContainer: { flexGrow: 1, padding: 16, backgroundColor: Platform.select({ ios: undefined, default: '#fff' }) },
-  modalCard: { backgroundColor: '#fff', padding: 12, borderRadius: 10 },
+  modalRoot: { flex: 1, justifyContent: 'flex-end' },
+  overlay: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.25)' },
+  sheetContainer: { backgroundColor: '#fff', paddingHorizontal: 16, paddingTop: 10, paddingBottom: 16, borderTopLeftRadius: 16, borderTopRightRadius: 16, maxHeight: '80%', height: '60%' },
+  sheetContent: { paddingBottom: 12 },
   sheetTitle: { fontSize: 16, fontWeight: '600', marginBottom: 6 },
   sheetText: { fontSize: 13, color: '#333' },
+  dragBar: { alignSelf: 'center', width: 40, height: 5, borderRadius: 3, backgroundColor: '#ddd', marginBottom: 10 },
+  statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12 },
+  statCard: { width: '47%', backgroundColor: '#f6f7fb', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 10, alignItems: 'center' },
+  statValue: { fontSize: 22, fontWeight: '700', color: '#111' },
+  statLabel: { fontSize: 11, color: '#666', marginTop: 4 },
 });

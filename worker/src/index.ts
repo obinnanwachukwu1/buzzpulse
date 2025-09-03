@@ -7,9 +7,8 @@ interface Env {
 
 type IngestBody = { cellId: string; ts?: number };
 
-const HALF_LIFE_HOURS = 6; // tweakable
-const HALF_LIFE_SECONDS = HALF_LIFE_HOURS * 3600;
-const TAU = HALF_LIFE_SECONDS / Math.log(2); // e^(-t/TAU) == 0.5 after half-life
+// Presence window (seconds) to consider a device "active"
+const PRESENCE_WINDOW_SEC = 10 * 60; // 10 minutes
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -28,7 +27,7 @@ export default {
         return await handleHeat(url, env);
       }
       if (req.method === "GET" && url.pathname === "/stats") {
-        return await handleStats(url, env);
+        return await handleStats(req, url, env);
       }
       if (url.pathname === "/health") {
         return json({ ok: true, service: "buzzpulse" });
@@ -43,11 +42,10 @@ export default {
 
 async function handleIngest(req: Request, env: Env): Promise<Response> {
   const raw = await req.text();
-  await requireAuth(req.headers, raw, env);
+  const deviceId = await requireAuth(req.headers, raw, env);
   const body = (JSON.parse(raw || "{}")) as Partial<IngestBody>;
   const cellId = String(body.cellId || "").trim();
   if (!cellId) return json({ ok: false, error: "Missing cellId" }, 400);
-  // Accept geohash (5-12) or building id with prefix b:slug
   const isGeohash = /^[0-9b-hjkmnp-z]{5,12}$/i.test(cellId);
   const isBuilding = /^b:[a-z0-9_-]+$/i.test(cellId);
   if (!isGeohash && !isBuilding) return json({ ok: false, error: "Invalid cellId" }, 400);
@@ -55,34 +53,26 @@ async function handleIngest(req: Request, env: Env): Promise<Response> {
   const nowSec = Math.floor(Date.now() / 1000);
   const ts = Number.isFinite(body.ts) && typeof body.ts === "number" ? Math.floor(body.ts!) : nowSec;
 
-  // Get prior state
-  const prior = await env.DB.prepare(
-    "select score, last_ts from cells where cell_id = ?"
-  )
-    .bind(cellId)
-    .first<{ score: number | null; last_ts: number | null }>();
-
-  let score = 0;
+  // Upsert device presence
+  const prior = await env.DB.prepare('select cell_id from device_presence where device_id=?').bind(deviceId).first<{ cell_id: string }>();
   if (!prior) {
-    score = 1;
-    await env.DB.prepare("insert into cells (cell_id, last_ts, score) values (?, ?, ?)")
-      .bind(cellId, ts, score)
-      .run();
+    await env.DB.prepare('insert into device_presence (device_id, cell_id, updated_ts) values (?, ?, ?)')
+      .bind(deviceId, cellId, ts).run();
+  } else if (prior.cell_id !== cellId) {
+    await env.DB.prepare('update device_presence set cell_id=?, updated_ts=? where device_id=?')
+      .bind(cellId, ts, deviceId).run();
   } else {
-    const prevScore = prior.score ?? 0;
-    const prevTs = prior.last_ts ?? ts;
-    const dt = Math.max(0, ts - prevTs);
-    const decayed = prevScore * Math.exp(-dt / TAU);
-    score = decayed + 1;
-    await env.DB.prepare("update cells set last_ts = ?, score = ? where cell_id = ?")
-      .bind(ts, score, cellId)
-      .run();
+    await env.DB.prepare('update device_presence set updated_ts=? where device_id=?')
+      .bind(ts, deviceId).run();
   }
 
-  // Record hit for k-anonymity (optional)
-  await env.DB.prepare("insert into hits (cell_id, ts) values (?, ?)").bind(cellId, ts).run();
+  // Compute current presence count for cell within window
+  const since = nowSec - PRESENCE_WINDOW_SEC;
+  const row = await env.DB.prepare('select count(*) as c from device_presence where cell_id=? and updated_ts>=?')
+    .bind(cellId, since).first<{ c: number }>();
+  const presence = row?.c ?? 0;
 
-  return json({ ok: true, cellId, ts, score });
+  return json({ ok: true, cellId, ts, presence });
 }
 
 async function handleHeat(url: URL, env: Env): Promise<Response> {
@@ -100,17 +90,18 @@ async function handleHeat(url: URL, env: Env): Promise<Response> {
   const nowSec = Math.floor(Date.now() / 1000);
   const since = nowSec - windowMinutes * 60;
 
-  // Filter by recent hits count >= K; score > 0
+  // Presence-based heat: group active devices by cell
   const stmt = env.DB.prepare(
-    `select c.cell_id as cell_id, c.score as score
-     from cells c
-     where c.score > 0
-       and (select count(*) from hits h where h.cell_id = c.cell_id and h.ts >= ?) >= ?`
+    `select cell_id, count(*) as c
+     from device_presence
+     where updated_ts >= ?
+     group by cell_id
+     having c >= ?`
   ).bind(since, minK);
 
-  const rows = await stmt.all<{ cell_id: string; score: number }>();
+  const rows = await stmt.all<{ cell_id: string; c: number }>();
   const items = (rows.results || [])
-    .map((r) => toHeatPoint(r.cell_id, r.score))
+    .map((r) => toHeatPoint(r.cell_id, r.c))
     .filter(Boolean) as Array<{ cellId: string; lat: number; lng: number; score: number; radius: number }>;
 
   // BBox filter in Worker (coarse, but OK for MVP)
@@ -154,7 +145,7 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
-async function handleStats(url: URL, env: Env): Promise<Response> {
+async function handleStats(req: Request, url: URL, env: Env): Promise<Response> {
   const cellId = url.searchParams.get('cellId') || '';
   if (!cellId) return json({ ok: false, error: 'Missing cellId' }, 400);
 
@@ -193,6 +184,20 @@ async function handleStats(url: URL, env: Env): Promise<Response> {
     name = BUILDINGS[id]?.name;
   }
 
+  // Current active presence for this cell
+  const presenceRow = await env.DB.prepare('select count(*) as c from device_presence where cell_id=? and updated_ts>=?')
+    .bind(cellId, nowSec - PRESENCE_WINDOW_SEC).first<{ c: number }>();
+
+  // Optional: include myVibe if signed headers present
+  const myId = await requireAuthOptional(req.headers, env);
+  let myVibe: string | undefined;
+  if (myId) {
+    const hour = nowSec - (nowSec % 3600);
+    const mv = await env.DB.prepare('select vibe from vibes where cell_id=? and device_id=? and hour=?')
+      .bind(cellId, myId, hour).first<{ vibe: string }>();
+    myVibe = mv?.vibe;
+  }
+
   const resp: any = {
     ok: true,
     cellId,
@@ -203,6 +208,8 @@ async function handleStats(url: URL, env: Env): Promise<Response> {
     lastHourHits: lastHour?.cnt ?? 0,
     typicalHourAvgHits7d: typical?.avgCnt ?? 0,
     vibesLastHour,
+    currentPresence: presenceRow?.c ?? 0,
+    myVibe,
   };
   resp.deltaVsTypical = (resp.lastHourHits ?? 0) - (resp.typicalHourAvgHits7d ?? 0);
   return json(resp);
@@ -220,18 +227,19 @@ async function handleDeviceRegister(env: Env): Promise<Response> {
 
 async function handleVibe(req: Request, env: Env): Promise<Response> {
   const raw = await req.text();
-  await requireAuth(req.headers, raw, env);
+  const deviceId = await requireAuth(req.headers, raw, env);
   const body = JSON.parse(raw || '{}') as { cellId?: string; vibe?: string; ts?: number };
   const cellId = (body.cellId || '').trim();
   const vibe = (body.vibe || '').trim();
   if (!cellId || !vibe) return json({ ok: false, error: 'Missing cellId or vibe' }, 400);
   const ts = Number.isFinite(body.ts) ? Math.floor(Number(body.ts)) : Math.floor(Date.now() / 1000);
-  await env.DB.prepare('insert into vibes (cell_id, vibe, ts, device_id) values (?, ?, ?, ?)')
-    .bind(cellId, vibe, ts, req.headers.get('x-device-id')).run();
+  const hour = ts - (ts % 3600);
+  await env.DB.prepare('insert into vibes (cell_id, vibe, ts, device_id, hour) values (?, ?, ?, ?, ?) on conflict(cell_id, device_id, hour) do update set vibe=excluded.vibe, ts=excluded.ts')
+    .bind(cellId, vibe, ts, deviceId, hour).run();
   return json({ ok: true });
 }
 
-async function requireAuth(h: Headers, body: string, env: Env): Promise<void> {
+async function requireAuth(h: Headers, body: string, env: Env): Promise<string> {
   const id = h.get('x-device-id') || '';
   const sig = (h.get('x-signature') || '').toLowerCase();
   const tsStr = h.get('x-timestamp') || '';
@@ -244,6 +252,21 @@ async function requireAuth(h: Headers, body: string, env: Env): Promise<void> {
   const check = await sha256Hex(`${id}.${ts}.${body}.${row.secret}`);
   if (check !== sig) throw new Error('Unauthorized');
   await env.DB.prepare('update devices set last_seen=? where device_id=?').bind(now, id).run();
+  return id;
+}
+
+async function requireAuthOptional(h: Headers, env: Env): Promise<string | undefined> {
+  const id = h.get('x-device-id') || '';
+  const sig = (h.get('x-signature') || '').toLowerCase();
+  const tsStr = h.get('x-timestamp') || '';
+  const ts = parseInt(tsStr, 10);
+  if (!id || !sig || !Number.isFinite(ts)) return undefined;
+  try {
+    await requireAuth(h, '', env);
+    return id;
+  } catch {
+    return undefined;
+  }
 }
 
 async function sha256Hex(input: string): Promise<string> {

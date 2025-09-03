@@ -38,3 +38,17 @@ export async function signedFetch(path: string, body: any) {
   });
 }
 
+export async function signedGet(path: string) {
+  const { deviceId, deviceSecret } = await ensureDevice();
+  const ts = Math.floor(Date.now() / 1000);
+  const payload = '';
+  const sig = await Crypto.digestStringAsync(Crypto.CryptoDigestAlgorithm.SHA256, `${deviceId}.${ts}.${payload}.${deviceSecret}`, { encoding: Crypto.CryptoEncoding.HEX });
+  return fetch(`${API_BASE_URL}${path}`, {
+    method: 'GET',
+    headers: {
+      'x-device-id': deviceId,
+      'x-timestamp': String(ts),
+      'x-signature': sig,
+    },
+  });
+}

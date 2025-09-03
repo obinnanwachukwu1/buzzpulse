@@ -230,8 +230,8 @@ function MapScreen() {
 
       // Hot-cell alerts (threshold 12, cooldown 30m per building)
       try {
-        const score = Number(resp?.score ?? 0);
-        if (score >= 12) {
+        const presence = Number((resp as any)?.presence ?? 0);
+        if (presence >= 5) {
           const key = `alert:last:${b.id}`;
           const last = await AsyncStorage.getItem(key);
           const now = Date.now();
@@ -398,11 +398,18 @@ function MapScreen() {
               {/* Vibe buttons */}
               {selectedBuilding && (
                 <View style={{ flexDirection: 'row', gap: 12 }}>
-                  {['👍','🔥','🎉','😴'].map((vb) => (
-                    <Pressable key={vb} onPress={async () => { try { const { sendVibe } = await import('./src/lib/vibes'); await sendVibe(`b:${selectedBuilding.id}`, vb); const stats = await fetchStats(`b:${selectedBuilding.id}`); setSelectedStats(stats); } catch {} }} style={{ backgroundColor: '#eef1f6', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 }}>
-                      <Text style={{ fontSize: 16 }}>{vb}</Text>
-                    </Pressable>
-                  ))}
+                  {['👍','🔥','🎉','😴'].map((vb) => {
+                    const selected = selectedStats?.myVibe === vb;
+                    return (
+                      <Pressable
+                        key={vb}
+                        disabled={selected}
+                        onPress={async () => { try { const { sendVibe } = await import('./src/lib/vibes'); await sendVibe(`b:${selectedBuilding.id}`, vb); const stats = await fetchStats(`b:${selectedBuilding.id}`); setSelectedStats(stats); } catch {} }}
+                        style={{ backgroundColor: selected ? '#dbe7ff' : '#eef1f6', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 }}>
+                        <Text style={{ fontSize: 16 }}>{vb}</Text>
+                      </Pressable>
+                    );
+                  })}
                 </View>
               )}
                   {/* swipe down or tap backdrop to close */}

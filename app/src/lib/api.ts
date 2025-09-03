@@ -1,4 +1,5 @@
 import Constants from "expo-constants";
+import { signedGet } from './auth';
 
 export type HeatPoint = {
   lat: number;
@@ -23,7 +24,7 @@ export async function fetchHeat(bbox: [number, number, number, number], opts?: {
 }
 
 export async function fetchStats(cellId: string) {
-  const res = await fetch(`${API_BASE_URL}/stats?cellId=${encodeURIComponent(cellId)}`);
+  const res = await signedGet(`/stats?cellId=${encodeURIComponent(cellId)}`);
   if (!res.ok) throw new Error(`Stats fetch failed: ${res.status}`);
   return await res.json();
 }

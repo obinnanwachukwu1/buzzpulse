@@ -6,7 +6,7 @@ import { NavigationContainer } from '@react-navigation/native';
 // Prefer native iOS tabs; fallback to RN tabs elsewhere
 const createBottomTabNavigator = (Platform.OS === 'ios'
   ? // eslint-disable-next-line @typescript-eslint/no-var-requires
-    require('@bottom-tabs/react-navigation').createBottomTabNavigator
+    require('@bottom-tabs/react-navigation').createNativeBottomTabNavigator
   : // eslint-disable-next-line @typescript-eslint/no-var-requires
     require('@react-navigation/bottom-tabs').createBottomTabNavigator) as typeof import('@react-navigation/bottom-tabs').createBottomTabNavigator;
 import { Ionicons } from '@expo/vector-icons';

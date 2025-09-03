@@ -160,6 +160,8 @@ function MapScreen() {
     setSelectedBuilding({ id, name });
     setSelectedStats(null);
     try {
+      // Nudge presence to update immediately upon selection
+      try { await sampleAndSend(); } catch {}
       const stats = await fetchStats(`b:${id}`);
       setSelectedStats(stats);
     } catch (e: any) {
@@ -217,8 +219,8 @@ function MapScreen() {
         }
       }
 
-      // Pick nearest building center; send building-based cellId
-      const b = findNearestBuilding(latitude, longitude);
+      // Prefer polygon containment, else nearest within 100m
+      const b = findBuildingForPoint(latitude, longitude, 100) || findNearestBuilding(latitude, longitude);
       if (!b) {
         setDroppedCount((c) => c + 1);
         return;
@@ -284,12 +286,12 @@ function MapScreen() {
           initialRegion={region}
           mapType={mapType}
           onRegionChangeComplete={onRegionChangeComplete}
-          onPress={(e: MapPressEvent) => {
+          onPress={async (e: MapPressEvent) => {
             const { latitude, longitude } = e.nativeEvent.coordinate;
-            const b = findNearestBuilding(latitude, longitude);
+            const b = findBuildingForPoint(latitude, longitude, 100) || findNearestBuilding(latitude, longitude);
             if (!b) return;
             const d = haversineMeters({ latitude, longitude }, b.center);
-            if (d <= SELECT_DISTANCE_M) handleSelectBuilding(b.id, b.name);
+            if (d <= SELECT_DISTANCE_M) { await Haptics.selectionAsync(); handleSelectBuilding(b.id, b.name); }
           }}
         >
           {BUILDINGS.map((b) => (

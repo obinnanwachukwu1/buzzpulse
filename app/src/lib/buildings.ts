@@ -5,6 +5,7 @@ export type Building = {
   name: string;
   center: { latitude: number; longitude: number };
   polygon: { latitude: number; longitude: number }[];
+  ring?: [number, number][]; // [lng, lat] for point-in-polygon checks
 };
 
 function centroid(coords: [number, number][]): { latitude: number; longitude: number } {
@@ -29,7 +30,7 @@ export const BUILDINGS: Building[] = (buildingsGeo.features || []).map((f: any) 
   }
   const center = centroid(ring);
   const polygon = ring.map(([lng, lat]) => ({ latitude: lat, longitude: lng }));
-  return { id, name, center, polygon } as Building;
+  return { id, name, center, polygon, ring } as Building;
 });
 
 function haversineMeters(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {
@@ -56,3 +57,26 @@ export function findNearestBuilding(lat: number, lng: number): Building | null {
   return best;
 }
 
+// Prefer polygon containment; fallback to nearest within maxDistanceMeters
+export function findBuildingForPoint(lat: number, lng: number, maxDistanceMeters = 100): Building | null {
+  for (const b of BUILDINGS) {
+    if (b.ring && pointInPolygon([lng, lat], b.ring)) return b;
+  }
+  const nearest = findNearestBuilding(lat, lng);
+  if (!nearest) return null;
+  const d = haversineMeters({ latitude: lat, longitude: lng }, nearest.center);
+  return d <= maxDistanceMeters ? nearest : null;
+}
+
+// Local import to avoid cycles at top-level
+function pointInPolygon(point: [number, number], polygon: [number, number][]): boolean {
+  const [x, y] = point;
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i][0], yi = polygon[i][1];
+    const xj = polygon[j][0], yj = polygon[j][1];
+    const intersect = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi + 0.0) + xi;
+    if (intersect) inside = !inside;
+  }
+  return inside;
+}

@@ -43,12 +43,12 @@ jobs:
           if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
             echo "Setting up keystore from secrets"
             echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app-upload.keystore
-            cat >> gradle.properties <<EOF
-            MYAPP_UPLOAD_STORE_FILE=app-upload.keystore
-            MYAPP_UPLOAD_STORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD}
-            MYAPP_UPLOAD_KEY_ALIAS=${ANDROID_KEY_ALIAS}
-            MYAPP_UPLOAD_KEY_PASSWORD=${ANDROID_KEY_ALIAS_PASSWORD}
-            EOF
+            {
+              echo "MYAPP_UPLOAD_STORE_FILE=app-upload.keystore"
+              echo "MYAPP_UPLOAD_STORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD}"
+              echo "MYAPP_UPLOAD_KEY_ALIAS=${ANDROID_KEY_ALIAS}"
+              echo "MYAPP_UPLOAD_KEY_PASSWORD=${ANDROID_KEY_ALIAS_PASSWORD}"
+            } >> gradle.properties
           else
             echo "Skipping signing: ANDROID_KEYSTORE_BASE64 not set"
           fi

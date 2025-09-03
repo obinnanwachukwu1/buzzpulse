@@ -33,22 +33,25 @@ jobs:
         run: npx expo prebuild -p android --non-interactive || npx expo prebuild -p android
 
       - name: Configure signing (optional)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
         working-directory: app/android
-        run: |
-          echo "Setting up keystore from secrets"
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app-upload.keystore
-          cat >> gradle.properties <<EOF
-          MYAPP_UPLOAD_STORE_FILE=app-upload.keystore
-          MYAPP_UPLOAD_STORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD}
-          MYAPP_UPLOAD_KEY_ALIAS=${ANDROID_KEY_ALIAS}
-          MYAPP_UPLOAD_KEY_PASSWORD=${ANDROID_KEY_ALIAS_PASSWORD}
-          EOF
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_ALIAS_PASSWORD: ${{ secrets.ANDROID_KEY_ALIAS_PASSWORD }}
+        run: |
+          if [ -n "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "Setting up keystore from secrets"
+            echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app-upload.keystore
+            cat >> gradle.properties <<EOF
+            MYAPP_UPLOAD_STORE_FILE=app-upload.keystore
+            MYAPP_UPLOAD_STORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD}
+            MYAPP_UPLOAD_KEY_ALIAS=${ANDROID_KEY_ALIAS}
+            MYAPP_UPLOAD_KEY_PASSWORD=${ANDROID_KEY_ALIAS_PASSWORD}
+            EOF
+          else
+            echo "Skipping signing: ANDROID_KEYSTORE_BASE64 not set"
+          fi
 
       - name: Build AAB
         working-directory: app/android
@@ -60,4 +63,3 @@ jobs:
         with:
           name: app-release-bundle
           path: app/android/app/build/outputs/bundle/release/app-release.aab
-

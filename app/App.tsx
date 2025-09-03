@@ -3,12 +3,20 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, StyleSheet, Text, View, Modal, Platform, ScrollView, Pressable, Animated, PanResponder, Dimensions } from 'react-native';
 import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType, MapPressEvent } from 'react-native-maps';
 import { NavigationContainer } from '@react-navigation/native';
-// Prefer native iOS tabs; fallback to RN tabs elsewhere
-const createBottomTabNavigator = (Platform.OS === 'ios'
-  ? // eslint-disable-next-line @typescript-eslint/no-var-requires
-    require('@bottom-tabs/react-navigation').createNativeBottomTabNavigator
-  : // eslint-disable-next-line @typescript-eslint/no-var-requires
-    require('@react-navigation/bottom-tabs').createBottomTabNavigator) as typeof import('@react-navigation/bottom-tabs').createBottomTabNavigator;
+import Constants from 'expo-constants';
+// Prefer native iOS tabs when available; gracefully fall back in Expo Go or if not linked
+let createBottomTabNavigator: ReturnType<typeof require>;
+try {
+  const canUseNative = Platform.OS === 'ios' && Constants.appOwnership !== 'expo';
+  if (canUseNative) {
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    createBottomTabNavigator = require('@bottom-tabs/react-navigation').createNativeBottomTabNavigator;
+  }
+} catch {}
+if (!createBottomTabNavigator) {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  createBottomTabNavigator = require('@react-navigation/bottom-tabs').createBottomTabNavigator;
+}
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';

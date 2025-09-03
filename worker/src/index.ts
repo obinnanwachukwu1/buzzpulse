@@ -1,13 +1,11 @@
 import { decode as decodeGeohash, cellRadiusMeters } from "./geohash";
+import { BUILDINGS } from "./locations";
 
 interface Env {
   DB: D1Database;
 }
 
-type IngestBody = {
-  cellId: string;
-  ts?: number; // seconds since epoch
-};
+type IngestBody = { cellId: string; ts?: number };
 
 const HALF_LIFE_HOURS = 6; // tweakable
 const HALF_LIFE_SECONDS = HALF_LIFE_HOURS * 3600;
@@ -22,6 +20,9 @@ export default {
       }
       if (req.method === "GET" && url.pathname === "/heat") {
         return await handleHeat(url, env);
+      }
+      if (req.method === "GET" && url.pathname === "/stats") {
+        return await handleStats(url, env);
       }
       if (url.pathname === "/health") {
         return json({ ok: true, service: "buzzpulse" });
@@ -38,10 +39,10 @@ async function handleIngest(req: Request, env: Env): Promise<Response> {
   const body = (await req.json().catch(() => ({}))) as Partial<IngestBody>;
   const cellId = String(body.cellId || "").trim();
   if (!cellId) return json({ ok: false, error: "Missing cellId" }, 400);
-  // Basic sanity: geohash chars and length
-  if (!/^[0-9b-hjkmnp-z]+$/i.test(cellId) || cellId.length < 5 || cellId.length > 12) {
-    return json({ ok: false, error: "Invalid cellId" }, 400);
-  }
+  // Accept geohash (5-12) or building id with prefix b:slug
+  const isGeohash = /^[0-9b-hjkmnp-z]{5,12}$/i.test(cellId);
+  const isBuilding = /^b:[a-z0-9_-]+$/i.test(cellId);
+  if (!isGeohash && !isBuilding) return json({ ok: false, error: "Invalid cellId" }, 400);
 
   const nowSec = Math.floor(Date.now() / 1000);
   const ts = Number.isFinite(body.ts) && typeof body.ts === "number" ? Math.floor(body.ts!) : nowSec;
@@ -101,16 +102,7 @@ async function handleHeat(url: URL, env: Env): Promise<Response> {
 
   const rows = await stmt.all<{ cell_id: string; score: number }>();
   const items = (rows.results || [])
-    .map((r) => {
-      try {
-        const { lat, lng } = decodeGeohash(r.cell_id);
-        const precision = r.cell_id.length;
-        const radius = cellRadiusMeters(precision);
-        return { cellId: r.cell_id, lat, lng, score: r.score, radius };
-      } catch {
-        return null;
-      }
-    })
+    .map((r) => toHeatPoint(r.cell_id, r.score))
     .filter(Boolean) as Array<{ cellId: string; lat: number; lng: number; score: number; radius: number }>;
 
   // BBox filter in Worker (coarse, but OK for MVP)
@@ -127,6 +119,26 @@ async function handleHeat(url: URL, env: Env): Promise<Response> {
   return json({ ok: true, count: payload.length, data: payload });
 }
 
+function toHeatPoint(cellId: string, score: number) {
+  // If building id, look up location; else decode geohash
+  if (/^b:[a-z0-9_-]+$/i.test(cellId)) {
+    const id = cellId.slice(2);
+    const b = BUILDINGS[id];
+    if (!b) return null;
+    // Fixed building radius
+    const radius = 60; // meters
+    return { cellId, lat: b.lat, lng: b.lng, score, radius };
+  }
+  try {
+    const { lat, lng } = decodeGeohash(cellId);
+    const radius = cellRadiusMeters(cellId.length);
+    return { cellId, lat, lng, score, radius };
+  } catch {
+    return null;
+  }
+}
+
+
 function json(data: unknown, status = 200): Response {
   return new Response(JSON.stringify(data), {
     status,
@@ -134,3 +146,51 @@ function json(data: unknown, status = 200): Response {
   });
 }
 
+async function handleStats(url: URL, env: Env): Promise<Response> {
+  const cellId = url.searchParams.get('cellId') || '';
+  if (!cellId) return json({ ok: false, error: 'Missing cellId' }, 400);
+
+  const nowSec = Math.floor(Date.now() / 1000);
+  const oneHourAgo = nowSec - 3600;
+  const sevenDaysAgo = nowSec - 7 * 86400;
+
+  const cell = await env.DB.prepare('select score as currentScore, last_ts as lastTs from cells where cell_id=?')
+    .bind(cellId).first<{ currentScore: number; lastTs: number }>();
+
+  const lastHour = await env.DB.prepare('select count(*) as cnt from hits where cell_id=? and ts>=?')
+    .bind(cellId, oneHourAgo).first<{ cnt: number }>();
+
+  // Typical: average count across past 7 days for current hour-of-day
+  const hourStr = new Date(nowSec * 1000).toISOString().substring(11, 13); // UTC hour
+  const typical = await env.DB.prepare(
+    `with hourly as (
+       select date(ts, 'unixepoch') as d, count(*) as cnt
+       from hits
+       where cell_id=? and ts>=?
+         and strftime('%H', ts, 'unixepoch') = ?
+       group by d
+     )
+     select avg(cnt) as avgCnt from hourly`
+  ).bind(cellId, sevenDaysAgo, hourStr).first<{ avgCnt: number | null }>();
+
+  let type = 'cell';
+  let name: string | undefined;
+  if (/^b:[a-z0-9_-]+$/i.test(cellId)) {
+    type = 'building';
+    const id = cellId.slice(2);
+    name = BUILDINGS[id]?.name;
+  }
+
+  const resp: any = {
+    ok: true,
+    cellId,
+    type,
+    name,
+    currentScore: cell?.currentScore ?? 0,
+    lastTs: cell?.lastTs ?? null,
+    lastHourHits: lastHour?.cnt ?? 0,
+    typicalHourAvgHits7d: typical?.avgCnt ?? 0,
+  };
+  resp.deltaVsTypical = (resp.lastHourHits ?? 0) - (resp.typicalHourAvgHits7d ?? 0);
+  return json(resp);
+}

@@ -123,6 +123,8 @@ function MapScreen() {
             latitudeDelta: 0.02,
             longitudeDelta: 0.02,
           });
+          // Auto-start tracking on app start when permission is granted
+          try { await startPulse(); } catch {}
         } else {
           setRegion(defaultRegion);
         }
@@ -381,11 +383,11 @@ function MapScreen() {
                   </View>
                   {/* Vibes row */}
                   {selectedStats?.vibesLastHour && (
-                    <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                    <View style={{ marginTop: 12, flexDirection: 'row', flexWrap: 'wrap', gap: 10, justifyContent: 'center' }}>
                       {Object.entries(selectedStats.vibesLastHour as Record<string, number>).map(([v, c]) => (
-                        <View key={v} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f1f5', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
-                          <Text style={{ fontSize: 16 }}>{v}</Text>
-                          <Text style={{ marginLeft: 6, fontSize: 12, color: '#333' }}>{c}</Text>
+                        <View key={v} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#eef1f6', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 }}>
+                          <Text style={{ fontSize: 22 }}>{v}</Text>
+                          <Text style={{ marginLeft: 8, fontSize: 14, color: '#111', fontWeight: '600' }}>{c}</Text>
                         </View>
                       ))}
                     </View>
@@ -397,7 +399,7 @@ function MapScreen() {
               )}
               {/* Vibe buttons */}
               {selectedBuilding && (
-                <View style={{ flexDirection: 'row', gap: 12 }}>
+                <View style={{ flexDirection: 'row', gap: 18, justifyContent: 'center', marginTop: 4 }}>
                   {['👍','🔥','🎉','😴'].map((vb) => {
                     const selected = selectedStats?.myVibe === vb;
                     return (
@@ -405,8 +407,8 @@ function MapScreen() {
                         key={vb}
                         disabled={selected}
                         onPress={async () => { try { const { sendVibe } = await import('./src/lib/vibes'); await sendVibe(`b:${selectedBuilding.id}`, vb); const stats = await fetchStats(`b:${selectedBuilding.id}`); setSelectedStats(stats); } catch {} }}
-                        style={{ backgroundColor: selected ? '#dbe7ff' : '#eef1f6', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 }}>
-                        <Text style={{ fontSize: 16 }}>{vb}</Text>
+                        style={{ backgroundColor: selected ? '#dbe7ff' : '#eef1f6', width: 56, height: 56, borderRadius: 28, alignItems: 'center', justifyContent: 'center' }}>
+                        <Text style={{ fontSize: 26 }}>{vb}</Text>
                       </Pressable>
                     );
                   })}

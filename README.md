@@ -1,122 +1,162 @@
-# BuzzPulse — Privacy-First Campus Heat Map
+# BuzzPulse — Privacy-First Campus Heat Map (Expo + Cloudflare Workers)
 
-BuzzPulse is a privacy-first campus activity heat map. Your phone samples location in the background (or foreground fallback), filters out residential areas, coarsens to ~150 m cells, and sends only cell hits to a Cloudflare Worker. The Worker aggregates into a decayed “heat score” you can render on a map.
+BuzzPulse shows live campus activity as a heat map while preserving privacy. The app samples location on-device, limits to campus zones, maps the position to a building, and sends only coarse, building‑level presence to a Cloudflare Worker. The backend aggregates active device presence and optional “vibes” to render a heat overlay.
 
-## Status
+## Highlights
 
-- Worker: scaffolding in progress (`/ingest`, `/heat`)
-- App: scaffolding planned (Map screen → circles)
-- D1: schema defined; wiring via `wrangler.toml`
+- Building‑level presence (not raw GPS) with a single presence per device that “moves” between buildings
+- Signed device auth: /ingest and /vibe require per‑device signatures
+- Presence‑based heat (K‑anonymity via min=K) and “vibes” (👍🔥🎉😴) limited to on‑location devices
+- Native iOS tabs (dev/standalone build) with safe‑area UI, blur surfaces, and haptics
+- Motion‑aware sampling and hot‑cell local notifications
 
-## Architecture Overview
+## Architecture
 
 Client (Expo React Native)
 
-- `expo-location` + (for background) `expo-task-manager` in an EAS dev/standalone build.
-- On-device residential mask (GeoJSON polygons) → drop any residential points.
-- Coarsen GPS to geohash (precision ~7 ≈ 150 m) → send `{cellId, ts}`.
-- Foreground map screen (react-native-maps) pulls `/heat` and draws circles.
-- Offline queue + retry (simple in-memory/AsyncStorage).
+- Location via `expo-location`; motion via `expo-sensors`; local alerts via `expo-notifications`
+- On‑device zone filtering (campus polygons) + building mapping (polygon containment → nearest centroid)
+- Device auth: registers once and signs requests (`x-device-id`, `x-timestamp`, `x-signature`)
+- Map (react-native-maps) + native iOS tabs (`react-native-bottom-tabs` in dev/standalone, RN tabs in Expo Go)
+- Bottom sheet for building stats: presence, last‑hour vibes, and vibe buttons
 
 Backend (Cloudflare Workers + D1)
 
-- `POST /ingest`: time-decay update per `cellId` (never store raw lat/lng).
-- `GET /heat`: return `{lat,lng,score,radius}` for cells in map bbox (server decodes geohash center).
-- Optional: `/stats`, `/cells/export`.
-
-Privacy
-
-- Never transmit precise coordinates.
-- k-anonymity threshold: don’t return a cell unless ≥K hits in last X minutes (e.g., K=3, X=30).
+- Presence model: one row per device indicating its current building + last update
+- Heat is derived from active presence in a recent window (default 15 minutes)
+- Vibes: one per device per building per hour; must be present to react
 
 ## Data Model (D1)
 
 ```sql
+-- 0001_init.sql (legacy aggregates, optional)
 create table if not exists cells (
   cell_id text primary key,
   last_ts integer,
   score real default 0
 );
-
 create table if not exists hits (
   id integer primary key autoincrement,
   cell_id text not null,
   ts integer not null
 );
 create index if not exists idx_hits_cell_ts on hits(cell_id, ts);
+
+-- 0002_auth_vibes.sql
+create table if not exists devices (
+  device_id text primary key,
+  secret text not null,
+  created_at integer not null,
+  last_seen integer,
+  disabled integer default 0
+);
+create table if not exists vibes (
+  id integer primary key autoincrement,
+  cell_id text not null,
+  vibe text not null,
+  ts integer not null,
+  device_id text,
+  hour integer
+);
+create index if not exists idx_vibes_cell_ts on vibes(cell_id, ts);
+create unique index if not exists idx_vibes_unique on vibes(cell_id, device_id, hour);
+
+-- 0003_presence.sql
+create table if not exists device_presence (
+  device_id text primary key,
+  cell_id text not null,
+  updated_ts integer not null
+);
+create index if not exists idx_presence_cell on device_presence(cell_id);
 ```
 
-> You can disable `hits` in production if you only want aggregates.
+## API
 
-## API Surface
+- POST `/device/register`
+  - Returns `{ deviceId, secret }`. Client stores this and signs future requests.
 
-- POST `/ingest` `{ cellId: string, ts?: number }`
-  - Decay then add: `score = score * exp(-(ts - last_ts)/τ) + 1`, `last_ts = ts`.
-  - τ (half-life): start with 6 hours (feels “live” across a day).
+- POST `/ingest` (signed)
+  - Body: `{ cellId: string (e.g., b:<buildingId>), ts?: number }`
+  - Upserts `device_presence` for the caller; returns `{ ok, cellId, ts, presence }` where `presence` is the active device count in that cell (15‑minute window).
 
 - GET `/heat?bbox=west,south,east,north&min=K&window=minutes`
-  - Return cells within bbox with `score>0` and `hits ≥ K` in the recent window.
-  - Payload: `[{ lat, lng, score, radius }]` (server decodes geohash center).
+  - Returns presence‑based heat within bbox for cells with at least K active devices in the last `window` minutes.
+  - Payload: `[{ lat, lng, score, radius }]` where score is presence count.
 
-`worker/wrangler.toml`
+- GET `/stats?cellId=b:<id>` (signed headers optional)
+  - Returns `{ currentPresence, vibesLastHour, myVibe?, ... }` for the cell. If signed headers are provided, includes whether the caller is present: `amIPresent: boolean` and `myVibe` for the current hour.
 
-```toml
-name = "buzzpulse"
-main = "src/index.ts"
-compatibility_date = "2025-09-02"
+- POST `/vibe` (signed)
+  - Body: `{ vibe: string }` (cellId is derived server‑side)
+  - Only allowed if the device is currently present at a building; one vibe per device per building per hour (server upsert).
 
-[[d1_databases]]
-binding = "DB"
-database_name = "buzzpulse_db"
-database_id = "REPLACE_ME"
+## Scripts (Buildings)
+
+Fetch all building polygons inside campus zones and generate both app and worker datasets:
+
+```bash
+cd scripts && npm i
+node fetch-buildings.mjs
 ```
 
-## App UX (3 screens)
-
-1. Map (Home)
-   - Map centered on campus; heat circles overlay.
-   - Top-right: Privacy chip (shows “Public spaces only”).
-   - Bottom sheet: legend + “Last updated” + Refresh.
-2. Pulse (Controls)
-   - Big toggle: Start/Stop Pulse.
-   - Status: sampling interval, last upload, cells sent.
-   - Foreground mode switch (for Expo Go fallback).
-3. About/Privacy
-   - What we collect (cell IDs, not lat/lng), residential exclusion, k-anonymity.
-   - Kill switch & data deletion note.
+Outputs:
+- `app/assets/buildings.json` (FeatureCollection for client overlays + selection)
+- `worker/src/locations.ts` (id → { lat, lng, name } for heat centers)
 
 ## Runbook
 
-Cloudflare
+Cloudflare Worker
 
 ```bash
 cd worker
-pnpm i # or npm i
+npm i
 wrangler d1 create buzzpulse_db
 wrangler d1 execute buzzpulse_db --file ./migrations/0001_init.sql
-wrangler dev
+wrangler d1 execute buzzpulse_db --file ./migrations/0002_auth_vibes.sql
+wrangler d1 execute buzzpulse_db --file ./migrations/0003_presence.sql
+wrangler d1 execute buzzpulse_db --file ./migrations/0004_vibes_unique.sql
 wrangler deploy
 ```
 
-Expo
+Expo App (local dev)
 
 ```bash
 cd app
-pnpm i # or npm i
-npx expo start
-# For background:
-npx eas build:configure
-npx eas build --profile development --platform ios|android
+npm i
+# Set API URL in app/app.json → expo.extra.API_BASE_URL (use your workers.dev URL)
+npx expo start  # Expo Go (JS tabs fallback) or dev client below
 ```
 
-## Collaboration Plan
+Dev/Standalone build for native iOS tabs
 
-- Client PRs: heat legend + radius slider; dev mock pin; offline queue; i18n; dark mode polish.
-- Server PRs: k-anonymity in `/heat`; `/stats`; `/cells/export.csv`.
+```bash
+cd app
+npx expo prebuild -p ios
+npx pod-install
+npx expo run:ios --device  # or build with EAS
+# EAS (requires Apple account):
+npx eas-cli@latest build --profile development --platform ios
+npx expo start --dev-client
+```
 
-## Risks & Fallbacks
+## App UX
 
-- Can’t ship EAS? Use Foreground Pulse.
-- Map API hiccups? Start with a list of nearby heat.
-- Missing residential polygons? Fence to campus polygon; document partial filtering.
+- Map with heat circles; tap buildings to see a sheet
+- Sheet shows: current presence, last‑hour vibes, and your vibe
+- Vibes are enabled only when you’re present at that building; one per hour
+- “Stats for nerds” (About) toggles the on‑map status panel (pulses sent / dropped / last upload)
+- Pulse auto‑starts on app launch when permission is granted
+
+## Privacy & Rules
+
+- No raw coordinates are stored server‑side; only building‑level presence and aggregates
+- Presence is unique per device; moving updates your presence and effectively removes you from the previous building
+- Heat is presence‑based and K‑anonymous (`min=K`)
+- Vibes are per‑device, per‑building, per‑hour, and allowed only for on‑location devices
+
+## Troubleshooting
+
+- Can’t react? Ensure Pulse is running so presence is fresh; presence window is 15 minutes. The sheet shows a hint if you aren’t present yet.
+- Native tabs not showing? Use a dev/standalone build; Expo Go falls back to JS tabs.
+- Device testing without paid Apple account: use Xcode free provisioning (open `app/ios/app.xcworkspace`, set Signing Team & bundle id, run on device) and `npx expo start --dev-client`.
 

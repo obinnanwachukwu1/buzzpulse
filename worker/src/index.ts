@@ -229,21 +229,22 @@ async function handleVibe(req: Request, env: Env): Promise<Response> {
   const raw = await req.text();
   const deviceId = await requireAuth(req.headers, raw, env);
   const body = JSON.parse(raw || '{}') as { cellId?: string; vibe?: string; ts?: number };
-  const cellId = (body.cellId || '').trim();
+  let cellId = (body.cellId || '').trim();
   const vibe = (body.vibe || '').trim();
   if (!cellId || !vibe) return json({ ok: false, error: 'Missing cellId or vibe' }, 400);
-  // Only allow building vibes
-  if (!/^b:[a-z0-9_-]+$/i.test(cellId)) return json({ ok: false, error: 'Vibes only allowed for buildings' }, 400);
   const ts = Number.isFinite(body.ts) ? Math.floor(Number(body.ts)) : Math.floor(Date.now() / 1000);
-  // Must be currently present at this building
+  // Must be currently present; derive building from presence, do not trust client cellId
   const present = await env.DB.prepare('select cell_id from device_presence where device_id=? and updated_ts>=?')
     .bind(deviceId, ts - PRESENCE_WINDOW_SEC)
     .first<{ cell_id: string }>();
-  if (!present || present.cell_id !== cellId) return json({ ok: false, error: 'Not present at this building' }, 403);
+  if (!present) return json({ ok: false, error: 'Not present' }, 403);
+  cellId = present.cell_id;
+  // Only allow building vibes
+  if (!/^b:[a-z0-9_-]+$/i.test(cellId)) return json({ ok: false, error: 'Vibes only allowed for buildings' }, 400);
   const hour = ts - (ts % 3600);
   await env.DB.prepare('insert into vibes (cell_id, vibe, ts, device_id, hour) values (?, ?, ?, ?, ?) on conflict(cell_id, device_id, hour) do update set vibe=excluded.vibe, ts=excluded.ts')
     .bind(cellId, vibe, ts, deviceId, hour).run();
-  return json({ ok: true });
+  return json({ ok: true, cellId, vibe });
 }
 
 async function requireAuth(h: Headers, body: string, env: Env): Promise<string> {

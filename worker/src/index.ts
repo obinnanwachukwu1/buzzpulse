@@ -66,6 +66,11 @@ async function handleIngest(req: Request, env: Env): Promise<Response> {
       .bind(ts, deviceId).run();
   }
 
+  // Upsert into hourly hits for analytics (distinct per device per hour)
+  const hour = ts - (ts % 3600);
+  await env.DB.prepare('insert into hits (cell_id, ts, device_id, hour) values (?, ?, ?, ?) on conflict(cell_id, device_id, hour) do update set ts=excluded.ts')
+    .bind(cellId, ts, deviceId, hour).run();
+
   // Compute current presence count for cell within window
   const since = nowSec - PRESENCE_WINDOW_SEC;
   const row = await env.DB.prepare('select count(*) as c from device_presence where cell_id=? and updated_ts>=?')
@@ -156,7 +161,7 @@ async function handleStats(req: Request, url: URL, env: Env): Promise<Response> 
   const cell = await env.DB.prepare('select score as currentScore, last_ts as lastTs from cells where cell_id=?')
     .bind(cellId).first<{ currentScore: number; lastTs: number }>();
 
-  const lastHour = await env.DB.prepare('select count(*) as cnt from hits where cell_id=? and ts>=?')
+  const lastHour = await env.DB.prepare('select count(distinct device_id) as cnt from hits where cell_id=? and ts>=?')
     .bind(cellId, oneHourAgo).first<{ cnt: number }>();
   const vibesRows = await env.DB.prepare('select vibe, count(*) as c from vibes where cell_id=? and ts>=? group by vibe')
     .bind(cellId, oneHourAgo).all<{ vibe: string; c: number }>();
@@ -167,7 +172,7 @@ async function handleStats(req: Request, url: URL, env: Env): Promise<Response> 
   const hourStr = new Date(nowSec * 1000).toISOString().substring(11, 13); // UTC hour
   const typical = await env.DB.prepare(
     `with hourly as (
-       select date(ts, 'unixepoch') as d, count(*) as cnt
+       select date(ts, 'unixepoch') as d, count(distinct device_id) as cnt
        from hits
        where cell_id=? and ts>=?
          and strftime('%H', ts, 'unixepoch') = ?

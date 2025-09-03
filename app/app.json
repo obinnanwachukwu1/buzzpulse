@@ -13,14 +13,28 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSLocationWhenInUseUsageDescription": "BuzzPulse uses your location to compute anonymous, coarse heat around campus.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow background location to contribute to anonymous campus heat, even when the app is not open.",
+        "UIBackgroundModes": ["location"]
+      }
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
       },
-      "edgeToEdgeEnabled": true
+      "edgeToEdgeEnabled": true,
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION"
+      ],
+      "foregroundService": {
+        "notificationTitle": "BuzzPulse is sampling location",
+        "notificationBody": "Contributing anonymous activity heat"
+      }
     },
     "web": {
       "favicon": "./assets/favicon.png"

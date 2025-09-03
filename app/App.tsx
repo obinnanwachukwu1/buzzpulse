@@ -4,6 +4,8 @@ import { Button, StyleSheet, Text, View } from 'react-native';
 import MapView, { Circle, MapViewProps, PROVIDER_DEFAULT, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
+import { encode as encodeGeohash } from './src/lib/geohash';
+import { ingestHit } from './src/lib/ingest';
 
 export default function App() {
   const mapRef = useRef<MapView>(null);
@@ -11,6 +13,10 @@ export default function App() {
   const [heat, setHeat] = useState<HeatPoint[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pulsing, setPulsing] = useState(false);
+  const [pulseCount, setPulseCount] = useState(0);
+  const [lastUpload, setLastUpload] = useState<string | null>(null);
+  const pulseTimer = useRef<NodeJS.Timer | null>(null);
 
   // Default: a campus-ish location (Stanford Main Quad)
   const defaultRegion: Region = useMemo(
@@ -61,6 +67,41 @@ export default function App() {
     }
   };
 
+  const startPulse = async () => {
+    if (pulsing) return;
+    setPulsing(true);
+    // Fire immediately once, then interval
+    await sampleAndSend();
+    pulseTimer.current = setInterval(sampleAndSend, 60 * 1000);
+  };
+
+  const stopPulse = () => {
+    setPulsing(false);
+    if (pulseTimer.current) {
+      clearInterval(pulseTimer.current);
+      pulseTimer.current = null;
+    }
+  };
+
+  const sampleAndSend = async () => {
+    try {
+      const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
+      const cellId = encodeGeohash(loc.coords.latitude, loc.coords.longitude, 7);
+      const ts = Math.floor(Date.now() / 1000);
+      await ingestHit(cellId, ts);
+      setPulseCount((c) => c + 1);
+      setLastUpload(new Date().toLocaleTimeString());
+    } catch (e: any) {
+      setError(e?.message ?? String(e));
+    }
+  };
+
+  useEffect(() => {
+    return () => {
+      if (pulseTimer.current) clearInterval(pulseTimer.current);
+    };
+  }, []);
+
   useEffect(() => {
     // Fetch once on mount/region ready
     if (region) refreshHeat();
@@ -90,7 +131,18 @@ export default function App() {
       )}
       <View style={styles.topBar}>
         <Text style={styles.title}>BuzzPulse</Text>
-        <Button title={loading ? 'Refreshing…' : 'Refresh'} onPress={refreshHeat} disabled={loading} />
+        <View style={{ flexDirection: 'row', gap: 8 }}>
+          <Button title={loading ? 'Refreshing…' : 'Refresh'} onPress={refreshHeat} disabled={loading} />
+          {pulsing ? (
+            <Button title="Stop Pulse" onPress={stopPulse} />
+          ) : (
+            <Button title="Start Pulse" onPress={startPulse} />
+          )}
+        </View>
+      </View>
+      <View style={styles.status}>
+        <Text style={styles.statusText}>Pulses sent: {pulseCount}</Text>
+        <Text style={styles.statusText}>Last upload: {lastUpload ?? '—'}</Text>
       </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <StatusBar style="dark" />
@@ -113,5 +165,15 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
   },
   title: { fontSize: 18, fontWeight: '600' },
+  status: {
+    position: 'absolute',
+    bottom: 80,
+    left: 16,
+    right: 16,
+    backgroundColor: 'rgba(255,255,255,0.9)',
+    padding: 8,
+    borderRadius: 8,
+  },
+  statusText: { fontSize: 12, color: '#333' },
   error: { position: 'absolute', bottom: 20, left: 16, right: 16, color: 'crimson' },
 });

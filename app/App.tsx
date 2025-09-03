@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, StyleSheet, Text, View, Modal, Platform, ScrollView, Pressable, Animated, PanResponder, Dimensions } from 'react-native';
+import { useEffect, useMemo, useRef, useState, createContext, useContext } from 'react';
+import { Button, StyleSheet, Text, View, Modal, Platform, ScrollView, Pressable, Animated, PanResponder, Dimensions, Switch } from 'react-native';
 import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType, MapPressEvent } from 'react-native-maps';
 import { NavigationContainer } from '@react-navigation/native';
 import Constants from 'expo-constants';
@@ -18,7 +18,8 @@ if (!createBottomTabNavigator) {
   createBottomTabNavigator = require('@react-navigation/bottom-tabs').createBottomTabNavigator;
 }
 import { Ionicons } from '@expo/vector-icons';
-import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
 import { ingestHit } from './src/lib/ingest';
@@ -39,8 +40,12 @@ function haversineMeters(a: { latitude: number; longitude: number }, b: { latitu
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+const SettingsContext = createContext<{ showStats: boolean; setShowStats: (v: boolean) => void }>({ showStats: false, setShowStats: () => {} });
+
 function MapScreen() {
   const mapRef = useRef<MapView>(null);
+  const insets = useSafeAreaInsets();
+  const { showStats } = useContext(SettingsContext);
   const [region, setRegion] = useState<Region | null>(null);
   const [heat, setHeat] = useState<HeatPoint[]>([]);
   const [loading, setLoading] = useState(false);
@@ -272,7 +277,7 @@ function MapScreen() {
           ))}
         </MapView>
       )}
-      <View style={styles.topBar}>
+      <View style={[styles.topBar, { top: insets.top + 8 }]}>
         <Text style={styles.title}>BuzzPulse</Text>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
           {pulsing ? (
@@ -282,11 +287,13 @@ function MapScreen() {
           )}
         </View>
       </View>
-      <View style={styles.status}>
-        <Text style={styles.statusText}>Pulses sent: {pulseCount}</Text>
-        <Text style={styles.statusText}>Dropped (outside zones): {droppedCount}</Text>
-        <Text style={styles.statusText}>Last upload: {lastUpload ?? '—'}</Text>
-      </View>
+      {showStats && (
+        <View style={[styles.status, { bottom: insets.bottom + 12 }]}>
+          <Text style={styles.statusText}>Pulses sent: {pulseCount}</Text>
+          <Text style={styles.statusText}>Dropped (outside zones): {droppedCount}</Text>
+          <Text style={styles.statusText}>Last upload: {lastUpload ?? '—'}</Text>
+        </View>
+      )}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <Modal
         visible={!!selectedBuilding}
@@ -341,11 +348,20 @@ function MapScreen() {
 }
 
 function AboutScreen() {
+  const { showStats, setShowStats } = useContext(SettingsContext);
   return (
     <SafeAreaView style={styles.aboutWrap}>
       <Text style={styles.aboutTitle}>About & Privacy</Text>
       <Text style={styles.aboutText}>BuzzPulse aggregates anonymous, coarse building hits to show campus activity. Your device never sends precise GPS or residential locations; only in-zone building IDs are used.</Text>
       <Text style={styles.aboutText}>Heat decays over time so the map reflects recent activity. Cells are served only when there are enough recent hits.</Text>
+      <View style={{ height: 16 }} />
+      <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+        <Text style={{ fontSize: 16 }}>Stats for nerds</Text>
+        <Switch
+          value={showStats}
+          onValueChange={async (v) => { setShowStats(v); try { await AsyncStorage.setItem('showStats', v ? '1' : '0'); } catch {} }}
+        />
+      </View>
     </SafeAreaView>
   );
 }
@@ -353,10 +369,15 @@ function AboutScreen() {
 const Tab = createBottomTabNavigator();
 
 export default function App() {
+  const [showStats, setShowStats] = useState(false);
+  useEffect(() => {
+    (async () => { try { const v = await AsyncStorage.getItem('showStats'); if (v === '1') setShowStats(true); } catch {} })();
+  }, []);
   return (
     <SafeAreaProvider>
-      <NavigationContainer>
-        <Tab.Navigator
+      <SettingsContext.Provider value={{ showStats, setShowStats }}>
+        <NavigationContainer>
+          <Tab.Navigator
           screenOptions={({ route }) => ({
             headerShown: false,
             tabBarIcon: ({ color, size, focused }) => {
@@ -368,11 +389,12 @@ export default function App() {
             tabBarActiveTintColor: '#111',
             tabBarInactiveTintColor: '#666',
           })}
-        >
-          <Tab.Screen name="Map" component={MapScreen} />
-          <Tab.Screen name="About" component={AboutScreen} />
-        </Tab.Navigator>
-      </NavigationContainer>
+          >
+            <Tab.Screen name="Map" component={MapScreen} />
+            <Tab.Screen name="About" component={AboutScreen} />
+          </Tab.Navigator>
+        </NavigationContainer>
+      </SettingsContext.Provider>
     </SafeAreaProvider>
   );
 }

@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, StyleSheet, Text, View, Switch, Modal, Platform, ScrollView, Pressable } from 'react-native';
+import { Button, StyleSheet, Text, View, Modal, Platform, ScrollView, Pressable, Animated, PanResponder, Dimensions } from 'react-native';
 import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType, MapPressEvent } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
@@ -33,13 +33,34 @@ export default function App() {
   const [lastUpload, setLastUpload] = useState<string | null>(null);
   const pulseTimer = useRef<NodeJS.Timer | null>(null);
   const [droppedCount, setDroppedCount] = useState(0);
-  const [showMasks, setShowMasks] = useState(true);
-  // Include-only filter: only send hits inside campus polygons
-  const [filterEnabled, setFilterEnabled] = useState(true);
-  const [mapType, setMapType] = useState<MapType>('standard');
+  // Always limit to zones; map type fixed
+  const [mapType] = useState<MapType>('standard');
   const [selectedBuilding, setSelectedBuilding] = useState<{ id: string; name: string } | null>(null);
   const [selectedStats, setSelectedStats] = useState<any>(null);
   const SELECT_DISTANCE_M = 80;
+  const [tab, setTab] = useState<'map' | 'about'>('map');
+  const windowH = Dimensions.get('window').height;
+  const SHEET_H = Math.round(windowH * 0.6);
+  const sheetTranslateY = useRef(new Animated.Value(SHEET_H)).current;
+  const closeSheet = () => {
+    Animated.timing(sheetTranslateY, { toValue: SHEET_H, duration: 200, useNativeDriver: true }).start(() => {
+      setSelectedBuilding(null);
+      setSelectedStats(null);
+    });
+  };
+  const panResponder = useRef(
+    PanResponder.create({
+      onMoveShouldSetPanResponder: (_e, g) => Math.abs(g.dy) > 5,
+      onPanResponderMove: (_e, g) => {
+        const ty = Math.max(0, Math.min(SHEET_H, g.dy));
+        sheetTranslateY.setValue(ty);
+      },
+      onPanResponderRelease: (_e, g) => {
+        if (g.dy > SHEET_H * 0.25 || g.vy > 0.75) closeSheet();
+        else Animated.spring(sheetTranslateY, { toValue: 0, useNativeDriver: true, bounciness: 0 }).start();
+      },
+    })
+  ).current;
 
   const campusPolys = useMemo(() => extractPolygons(campusMask), []);
   const campusPolysLatLng = useMemo(() =>
@@ -129,8 +150,8 @@ export default function App() {
       const { latitude, longitude } = loc.coords;
       const pt: [number, number] = [longitude, latitude];
 
-      // Include-only: if filter is enabled and we have campus polygons, drop points outside them
-      if (filterEnabled && campusPolys.length > 0) {
+      // Include-only: if we have campus polygons, drop points outside them
+      if (campusPolys.length > 0) {
         const inCampus = campusPolys.some((poly) => pointInPolygon(pt, poly));
         if (!inCampus) {
           setDroppedCount((c) => c + 1);
@@ -166,9 +187,25 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [region?.latitude, region?.longitude, region?.latitudeDelta, region?.longitudeDelta]);
 
+  // Animate sheet when opening
+  useEffect(() => {
+    if (selectedBuilding) {
+      sheetTranslateY.setValue(SHEET_H);
+      Animated.timing(sheetTranslateY, { toValue: 0, duration: 220, useNativeDriver: true }).start();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedBuilding]);
+
+  // Auto-refresh heat periodically
+  useEffect(() => {
+    const t = setInterval(() => void refreshHeat(), 30000);
+    return () => clearInterval(t);
+  }, [region?.latitude, region?.longitude, region?.latitudeDelta, region?.longitudeDelta]);
+
   return (
     <View style={styles.container}>
-      {region && (
+      {/* MAP TAB */}
+      {tab === 'map' && region && (
         <MapView
           ref={mapRef}
           style={StyleSheet.absoluteFill}
@@ -184,21 +221,13 @@ export default function App() {
             if (d <= SELECT_DISTANCE_M) handleSelectBuilding(b.id, b.name);
           }}
         >
-          {showMasks && (
-            <>
-              {campusPolysLatLng.map((coords, idx) => (
-                <Polygon key={`campus-${idx}`} coordinates={coords} strokeColor="#0066cc" strokeWidth={2} fillColor="rgba(0,102,204,0.07)" />
-              ))}
-            </>
-          )}
-
           {BUILDINGS.map((b) => (
             <Polygon
               key={`b-${b.id}`}
               coordinates={b.polygon}
-              strokeColor={showMasks ? '#333333' : 'transparent'}
-              strokeWidth={showMasks ? 1 : 0}
-              fillColor={showMasks ? 'rgba(50,50,50,0.15)' : 'transparent'}
+              strokeColor={'transparent'}
+              strokeWidth={0}
+              fillColor={'transparent'}
               tappable
               onPress={() => handleSelectBuilding(b.id, b.name)}
             />
@@ -228,44 +257,44 @@ export default function App() {
           ))}
         </MapView>
       )}
+      {tab === 'map' && (
       <View style={styles.topBar}>
         <Text style={styles.title}>BuzzPulse</Text>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          <Button title={loading ? 'Refreshing…' : 'Refresh'} onPress={refreshHeat} disabled={loading} />
           {pulsing ? (
             <Button title="Stop Pulse" onPress={stopPulse} />
           ) : (
             <Button title="Start Pulse" onPress={startPulse} />
           )}
-          <Button title={mapType === 'standard' ? 'Map: Std' : 'Map: Sat'} onPress={() => setMapType(mapType === 'standard' ? 'satellite' : 'standard')} />
         </View>
       </View>
+      )}
+      {tab === 'map' && (
       <View style={styles.status}>
-        <Text style={styles.statusText}>Pulses sent (in zones): {pulseCount}</Text>
+        <Text style={styles.statusText}>Pulses sent: {pulseCount}</Text>
         <Text style={styles.statusText}>Dropped (outside zones): {droppedCount}</Text>
         <Text style={styles.statusText}>Last upload: {lastUpload ?? '—'}</Text>
-        <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4, gap: 12 }}>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={styles.statusText}>Show zones</Text>
-            <Switch value={showMasks} onValueChange={setShowMasks} />
-          </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-            <Text style={styles.statusText}>Limit to zones</Text>
-            <Switch value={filterEnabled} onValueChange={setFilterEnabled} />
-          </View>
-        </View>
       </View>
+      )}
+
+      {tab === 'about' && (
+        <View style={styles.aboutWrap}>
+          <Text style={styles.aboutTitle}>About & Privacy</Text>
+          <Text style={styles.aboutText}>BuzzPulse aggregates anonymous, coarse building hits to show campus activity. Your device never sends precise GPS or residential locations; only in-zone building IDs are used.</Text>
+          <Text style={styles.aboutText}>Heat decays over time so the map reflects recent activity. Cells are served only when there are enough recent hits.</Text>
+        </View>
+      )}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <Modal
         visible={!!selectedBuilding}
-        animationType="slide"
+        animationType="none"
         transparent
-        onRequestClose={() => { setSelectedBuilding(null); setSelectedStats(null); }}
+        onRequestClose={closeSheet}
       >
         <View style={styles.modalRoot}>
-          <Pressable style={styles.overlay} onPress={() => { setSelectedBuilding(null); setSelectedStats(null); }} />
-          <View style={styles.sheetContainer}>
-            <View style={styles.dragBar} />
+          <Pressable style={styles.overlay} onPress={closeSheet} />
+          <Animated.View style={[styles.sheetContainer, { transform: [{ translateY: sheetTranslateY }] }] }>
+            <View style={styles.dragBar} {...panResponder.panHandlers} />
             <ScrollView contentContainerStyle={styles.sheetContent}>
               {selectedBuilding && (
                 <View>
@@ -295,14 +324,24 @@ export default function App() {
                   ) : (
                     <Text style={styles.sheetText}>Loading…</Text>
                   )}
-                  <Button title="Close" onPress={() => { setSelectedBuilding(null); setSelectedStats(null); }} />
+                  {/* swipe down or tap backdrop to close */}
                 </View>
               )}
             </ScrollView>
-          </View>
+          </Animated.View>
         </View>
       </Modal>
       <StatusBar style="dark" />
+
+      {/* Simple bottom tab bar */}
+      <View style={styles.tabBar}>
+        <Pressable style={[styles.tabBtn, tab === 'map' && styles.tabBtnActive]} onPress={() => setTab('map')}>
+          <Text style={[styles.tabText, tab === 'map' && styles.tabTextActive]}>Map</Text>
+        </Pressable>
+        <Pressable style={[styles.tabBtn, tab === 'about' && styles.tabBtnActive]} onPress={() => setTab('about')}>
+          <Text style={[styles.tabText, tab === 'about' && styles.tabTextActive]}>About</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
@@ -324,7 +363,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '600' },
   status: {
     position: 'absolute',
-    bottom: 80,
+    bottom: 120,
     left: 16,
     right: 16,
     backgroundColor: 'rgba(255,255,255,0.9)',
@@ -344,4 +383,12 @@ const styles = StyleSheet.create({
   statCard: { width: '47%', backgroundColor: '#f6f7fb', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 10, alignItems: 'center' },
   statValue: { fontSize: 22, fontWeight: '700', color: '#111' },
   statLabel: { fontSize: 11, color: '#666', marginTop: 4 },
+  tabBar: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 70, backgroundColor: '#fff', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#ddd', flexDirection: 'row', justifyContent: 'space-evenly', alignItems: 'center' },
+  tabBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 12 },
+  tabBtnActive: { backgroundColor: '#f0f1f5' },
+  tabText: { fontSize: 12, color: '#666' },
+  tabTextActive: { color: '#111', fontWeight: '600' },
+  aboutWrap: { flex: 1, padding: 16, paddingBottom: 100 },
+  aboutTitle: { fontSize: 22, fontWeight: '700', marginBottom: 8 },
+  aboutText: { fontSize: 14, color: '#333', marginBottom: 8 },
 });

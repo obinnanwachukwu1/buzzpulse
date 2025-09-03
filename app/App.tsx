@@ -24,6 +24,8 @@ import * as Haptics from 'expo-haptics';
 import { BlurView } from 'expo-blur';
 import { colors, radius } from './src/theme';
 import * as Location from 'expo-location';
+import * as Notifications from 'expo-notifications';
+import { Accelerometer } from 'expo-sensors';
 import { fetchHeat, HeatPoint } from './src/lib/api';
 import { ingestHit } from './src/lib/ingest';
 import campusMask from './assets/masks/campus.json';
@@ -91,6 +93,17 @@ function MapScreen() {
     campusPolys.map((poly) => poly.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))),
     [campusPolys]
   );
+
+  // Ensure device auth and notifications permission
+  useEffect(() => {
+    (async () => {
+      try {
+        const { ensureDevice } = await import('./src/lib/auth');
+        await ensureDevice();
+        await Notifications.requestPermissionsAsync();
+      } catch {}
+    })();
+  }, []);
 
   // Default: a campus-ish location (Stanford Main Quad)
   const defaultRegion: Region = useMemo(
@@ -168,11 +181,31 @@ function MapScreen() {
     }
   };
 
+  // Motion-aware sampling
+  const lastMoveRef = useRef<number>(Date.now());
+  useEffect(() => {
+    Accelerometer.setUpdateInterval(1000);
+    const sub = Accelerometer.addListener(({ x, y, z }) => {
+      const mag = Math.sqrt(x * x + y * y + z * z);
+      if (Math.abs(mag - 1) > 0.04) lastMoveRef.current = Date.now();
+    });
+    return () => sub && sub.remove();
+  }, []);
+
   const sampleAndSend = async () => {
     try {
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
       const { latitude, longitude } = loc.coords;
       const pt: [number, number] = [longitude, latitude];
+
+      // Motion-aware gating (skip if still for 90s or driving fast)
+      const speed = typeof loc.coords.speed === 'number' ? loc.coords.speed : 0;
+      const still = Date.now() - lastMoveRef.current > 90_000;
+      const driving = speed > 8;
+      if (still || driving) {
+        setDroppedCount((c) => c + 1);
+        return;
+      }
 
       // Include-only: if we have campus polygons, drop points outside them
       if (campusPolys.length > 0) {
@@ -191,9 +224,23 @@ function MapScreen() {
       }
       const cellId = `b:${b.id}`;
       const ts = Math.floor(Date.now() / 1000);
-      await ingestHit(cellId, ts);
+      const resp = await ingestHit(cellId, ts);
       setPulseCount((c) => c + 1);
       setLastUpload(new Date().toLocaleTimeString());
+
+      // Hot-cell alerts (threshold 12, cooldown 30m per building)
+      try {
+        const score = Number(resp?.score ?? 0);
+        if (score >= 12) {
+          const key = `alert:last:${b.id}`;
+          const last = await AsyncStorage.getItem(key);
+          const now = Date.now();
+          if (!last || now - Number(last) > 30 * 60 * 1000) {
+            await Notifications.scheduleNotificationAsync({ content: { title: 'Hot spot nearby', body: `${b.name} is heating up` }, trigger: null });
+            await AsyncStorage.setItem(key, String(now));
+          }
+        }
+      } catch {}
     } catch (e: any) {
       setError(e?.message ?? String(e));
     }
@@ -312,13 +359,13 @@ function MapScreen() {
               {selectedBuilding && (
                 <View>
                   <Text style={styles.sheetTitle}>{selectedBuilding.name}</Text>
-                  {selectedStats ? (
-                    <>
-                      <View style={styles.statsGrid}>
-                        <View style={styles.statCard}>
-                          <Text style={styles.statValue}>{(selectedStats.currentScore ?? 0).toFixed?.(2) ?? selectedStats.currentScore}</Text>
-                          <Text style={styles.statLabel}>Score</Text>
-                        </View>
+              {selectedStats ? (
+                <>
+                  <View style={styles.statsGrid}>
+                    <View style={styles.statCard}>
+                      <Text style={styles.statValue}>{(selectedStats.currentScore ?? 0).toFixed?.(2) ?? selectedStats.currentScore}</Text>
+                      <Text style={styles.statLabel}>Score</Text>
+                    </View>
                         <View style={styles.statCard}>
                           <Text style={styles.statValue}>{selectedStats.lastHourHits ?? 0}</Text>
                           <Text style={styles.statLabel}>Hits (1h)</Text>
@@ -329,14 +376,35 @@ function MapScreen() {
                         </View>
                         <View style={styles.statCard}>
                           <Text style={styles.statValue}>{(selectedStats.deltaVsTypical > 0 ? '+' : '') + Number(selectedStats.deltaVsTypical ?? 0).toFixed(1)}</Text>
-                          <Text style={styles.statLabel}>Δ vs typical</Text>
+                      <Text style={styles.statLabel}>Δ vs typical</Text>
+                    </View>
+                  </View>
+                  {/* Vibes row */}
+                  {selectedStats?.vibesLastHour && (
+                    <View style={{ marginTop: 10, flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+                      {Object.entries(selectedStats.vibesLastHour as Record<string, number>).map(([v, c]) => (
+                        <View key={v} style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#f0f1f5', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 14 }}>
+                          <Text style={{ fontSize: 16 }}>{v}</Text>
+                          <Text style={{ marginLeft: 6, fontSize: 12, color: '#333' }}>{c}</Text>
                         </View>
-                      </View>
-                      <View style={{ height: 16 }} />
-                    </>
-                  ) : (
-                    <Text style={styles.sheetText}>Loading…</Text>
+                      ))}
+                    </View>
                   )}
+                  <View style={{ height: 16 }} />
+                </>
+              ) : (
+                <Text style={styles.sheetText}>Loading…</Text>
+              )}
+              {/* Vibe buttons */}
+              {selectedBuilding && (
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                  {['👍','🔥','🎉','😴'].map((vb) => (
+                    <Pressable key={vb} onPress={async () => { try { const { sendVibe } = await import('./src/lib/vibes'); await sendVibe(`b:${selectedBuilding.id}`, vb); const stats = await fetchStats(`b:${selectedBuilding.id}`); setSelectedStats(stats); } catch {} }} style={{ backgroundColor: '#eef1f6', borderRadius: 14, paddingHorizontal: 12, paddingVertical: 6 }}>
+                      <Text style={{ fontSize: 16 }}>{vb}</Text>
+                    </Pressable>
+                  ))}
+                </View>
+              )}
                   {/* swipe down or tap backdrop to close */}
                 </View>
               )}

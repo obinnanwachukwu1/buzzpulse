@@ -31,6 +31,7 @@ import { ingestHit } from './src/lib/ingest';
 import campusMask from './assets/masks/campus.json';
 import { extractPolygons, pointInPolygon } from './src/lib/pip';
 import { BUILDINGS, findNearestBuilding, findBuildingForPoint } from './src/lib/buildings';
+import LeafletMap from './src/components/LeafletMap';
 import { fetchStats } from './src/lib/api';
 
 function haversineMeters(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {
@@ -278,7 +279,7 @@ function MapScreen() {
 
   return (
     <SafeAreaView style={styles.container}>
-      {region && (
+      {region && Platform.OS !== 'android' && (
         <MapView
           ref={mapRef}
           style={StyleSheet.absoluteFill}
@@ -329,6 +330,18 @@ function MapScreen() {
             />
           ))}
         </MapView>
+      )}
+      {region && Platform.OS === 'android' && (
+        <LeafletMap
+          region={region}
+          heat={heat}
+          onTap={async (latitude, longitude) => {
+            const b = findBuildingForPoint(latitude, longitude, 100) || findNearestBuilding(latitude, longitude);
+            if (!b) return;
+            const d = haversineMeters({ latitude, longitude }, b.center);
+            if (d <= SELECT_DISTANCE_M) { await Haptics.selectionAsync(); handleSelectBuilding(b.id, b.name); }
+          }}
+        />
       )}
       <BlurView intensity={50} tint={Platform.OS === 'ios' ? ('systemChromeMaterial' as any) : 'light'} style={[styles.topBar, { top: insets.top + 8 }] }>
         <Text style={styles.title}>BuzzPulse</Text>

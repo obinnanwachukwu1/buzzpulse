@@ -125,8 +125,8 @@ function toHeatPoint(cellId: string, score: number) {
     const id = cellId.slice(2);
     const b = BUILDINGS[id];
     if (!b) return null;
-    // Fixed building radius
-    const radius = 60; // meters
+    // Fixed building radius (smaller for building-centric heat)
+    const radius = 25; // meters
     return { cellId, lat: b.lat, lng: b.lng, score, radius };
   }
   try {

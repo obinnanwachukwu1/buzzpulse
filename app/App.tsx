@@ -1,6 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, StyleSheet, Text, View, Switch } from 'react-native';
+import { Button, StyleSheet, Text, View, Switch, Modal, Platform, ScrollView } from 'react-native';
 import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType, MapPressEvent } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
@@ -256,26 +256,34 @@ export default function App() {
         </View>
       </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      {selectedBuilding && (
-        <View style={styles.sheet}>
-          <View style={styles.sheetHandle} />
-          <Text style={styles.sheetTitle}>{selectedBuilding.name}</Text>
-          {selectedStats ? (
-            <>
-              <Text style={styles.sheetText}>Current score: {selectedStats.currentScore?.toFixed?.(2) ?? selectedStats.currentScore}</Text>
-              <Text style={styles.sheetText}>Hits last hour: {selectedStats.lastHourHits}</Text>
-              <Text style={styles.sheetText}>Typical (this hour, 7d avg): {Number(selectedStats.typicalHourAvgHits7d ?? 0).toFixed(1)}</Text>
-              {typeof selectedStats.deltaVsTypical === 'number' && (
-                <Text style={styles.sheetText}>Delta vs typical: {selectedStats.deltaVsTypical > 0 ? '+' : ''}{Number(selectedStats.deltaVsTypical).toFixed(1)}</Text>
+      <Modal
+        visible={!!selectedBuilding}
+        animationType="slide"
+        presentationStyle={Platform.OS === 'ios' ? 'pageSheet' : 'fullScreen'}
+        onRequestClose={() => { setSelectedBuilding(null); setSelectedStats(null); }}
+      >
+        <ScrollView contentContainerStyle={styles.modalContainer}>
+          {selectedBuilding && (
+            <View style={styles.modalCard}>
+              <Text style={styles.sheetTitle}>{selectedBuilding.name}</Text>
+              {selectedStats ? (
+                <>
+                  <Text style={styles.sheetText}>Current score: {selectedStats.currentScore?.toFixed?.(2) ?? selectedStats.currentScore}</Text>
+                  <Text style={styles.sheetText}>Hits last hour: {selectedStats.lastHourHits}</Text>
+                  <Text style={styles.sheetText}>Typical (this hour, 7d avg): {Number(selectedStats.typicalHourAvgHits7d ?? 0).toFixed(1)}</Text>
+                  {typeof selectedStats.deltaVsTypical === 'number' && (
+                    <Text style={styles.sheetText}>Delta vs typical: {selectedStats.deltaVsTypical > 0 ? '+' : ''}{Number(selectedStats.deltaVsTypical).toFixed(1)}</Text>
+                  )}
+                </>
+              ) : (
+                <Text style={styles.sheetText}>Loading…</Text>
               )}
-            </>
-          ) : (
-            <Text style={styles.sheetText}>Loading…</Text>
+              <View style={{ height: 12 }} />
+              <Button title="Close" onPress={() => { setSelectedBuilding(null); setSelectedStats(null); }} />
+            </View>
           )}
-          <View style={{ height: 10 }} />
-          <Button title="Close" onPress={() => { setSelectedBuilding(null); setSelectedStats(null); }} />
-        </View>
-      )}
+        </ScrollView>
+      </Modal>
       <StatusBar style="dark" />
     </View>
   );
@@ -307,26 +315,8 @@ const styles = StyleSheet.create({
   },
   statusText: { fontSize: 12, color: '#333' },
   error: { position: 'absolute', bottom: 20, left: 16, right: 16, color: 'crimson' },
-  sheet: {
-    position: 'absolute',
-    left: 16,
-    right: 16,
-    bottom: 20,
-    backgroundColor: 'white',
-    padding: 12,
-    borderRadius: 10,
-    shadowColor: '#000',
-    shadowOpacity: 0.2,
-    shadowRadius: 8,
-  },
+  modalContainer: { flexGrow: 1, padding: 16, backgroundColor: Platform.select({ ios: undefined, default: '#fff' }) },
+  modalCard: { backgroundColor: '#fff', padding: 12, borderRadius: 10 },
   sheetTitle: { fontSize: 16, fontWeight: '600', marginBottom: 6 },
   sheetText: { fontSize: 13, color: '#333' },
-  sheetHandle: {
-    alignSelf: 'center',
-    width: 36,
-    height: 4,
-    borderRadius: 2,
-    backgroundColor: '#ccc',
-    marginBottom: 10,
-  },
 });

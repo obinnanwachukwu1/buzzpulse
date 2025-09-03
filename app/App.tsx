@@ -2,6 +2,10 @@ import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, StyleSheet, Text, View, Modal, Platform, ScrollView, Pressable, Animated, PanResponder, Dimensions } from 'react-native';
 import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType, MapPressEvent } from 'react-native-maps';
+import { NavigationContainer } from '@react-navigation/native';
+import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
+import { Ionicons } from '@expo/vector-icons';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
 import { ingestHit } from './src/lib/ingest';
@@ -22,7 +26,7 @@ function haversineMeters(a: { latitude: number; longitude: number }, b: { latitu
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-export default function App() {
+function MapScreen() {
   const mapRef = useRef<MapView>(null);
   const [region, setRegion] = useState<Region | null>(null);
   const [heat, setHeat] = useState<HeatPoint[]>([]);
@@ -38,7 +42,6 @@ export default function App() {
   const [selectedBuilding, setSelectedBuilding] = useState<{ id: string; name: string } | null>(null);
   const [selectedStats, setSelectedStats] = useState<any>(null);
   const SELECT_DISTANCE_M = 80;
-  const [tab, setTab] = useState<'map' | 'about'>('map');
   const windowH = Dimensions.get('window').height;
   const SHEET_H = Math.round(windowH * 0.6);
   const sheetTranslateY = useRef(new Animated.Value(SHEET_H)).current;
@@ -203,9 +206,8 @@ export default function App() {
   }, [region?.latitude, region?.longitude, region?.latitudeDelta, region?.longitudeDelta]);
 
   return (
-    <View style={styles.container}>
-      {/* MAP TAB */}
-      {tab === 'map' && region && (
+    <SafeAreaView style={styles.container}>
+      {region && (
         <MapView
           ref={mapRef}
           style={StyleSheet.absoluteFill}
@@ -257,7 +259,6 @@ export default function App() {
           ))}
         </MapView>
       )}
-      {tab === 'map' && (
       <View style={styles.topBar}>
         <Text style={styles.title}>BuzzPulse</Text>
         <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
@@ -268,22 +269,11 @@ export default function App() {
           )}
         </View>
       </View>
-      )}
-      {tab === 'map' && (
       <View style={styles.status}>
         <Text style={styles.statusText}>Pulses sent: {pulseCount}</Text>
         <Text style={styles.statusText}>Dropped (outside zones): {droppedCount}</Text>
         <Text style={styles.statusText}>Last upload: {lastUpload ?? '—'}</Text>
       </View>
-      )}
-
-      {tab === 'about' && (
-        <View style={styles.aboutWrap}>
-          <Text style={styles.aboutTitle}>About & Privacy</Text>
-          <Text style={styles.aboutText}>BuzzPulse aggregates anonymous, coarse building hits to show campus activity. Your device never sends precise GPS or residential locations; only in-zone building IDs are used.</Text>
-          <Text style={styles.aboutText}>Heat decays over time so the map reflects recent activity. Cells are served only when there are enough recent hits.</Text>
-        </View>
-      )}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <Modal
         visible={!!selectedBuilding}
@@ -333,16 +323,44 @@ export default function App() {
       </Modal>
       <StatusBar style="dark" />
 
-      {/* Simple bottom tab bar */}
-      <View style={styles.tabBar}>
-        <Pressable style={[styles.tabBtn, tab === 'map' && styles.tabBtnActive]} onPress={() => setTab('map')}>
-          <Text style={[styles.tabText, tab === 'map' && styles.tabTextActive]}>Map</Text>
-        </Pressable>
-        <Pressable style={[styles.tabBtn, tab === 'about' && styles.tabBtnActive]} onPress={() => setTab('about')}>
-          <Text style={[styles.tabText, tab === 'about' && styles.tabTextActive]}>About</Text>
-        </Pressable>
-      </View>
-    </View>
+    </SafeAreaView>
+  );
+}
+
+function AboutScreen() {
+  return (
+    <SafeAreaView style={styles.aboutWrap}>
+      <Text style={styles.aboutTitle}>About & Privacy</Text>
+      <Text style={styles.aboutText}>BuzzPulse aggregates anonymous, coarse building hits to show campus activity. Your device never sends precise GPS or residential locations; only in-zone building IDs are used.</Text>
+      <Text style={styles.aboutText}>Heat decays over time so the map reflects recent activity. Cells are served only when there are enough recent hits.</Text>
+    </SafeAreaView>
+  );
+}
+
+const Tab = createBottomTabNavigator();
+
+export default function App() {
+  return (
+    <SafeAreaProvider>
+      <NavigationContainer>
+        <Tab.Navigator
+          screenOptions={({ route }) => ({
+            headerShown: false,
+            tabBarIcon: ({ color, size, focused }) => {
+              if (route.name === 'Map') {
+                return <Ionicons name={focused ? 'map' : 'map-outline'} size={size} color={color} />;
+              }
+              return <Ionicons name={focused ? 'information-circle' : 'information-circle-outline'} size={size} color={color} />;
+            },
+            tabBarActiveTintColor: '#111',
+            tabBarInactiveTintColor: '#666',
+          })}
+        >
+          <Tab.Screen name="Map" component={MapScreen} />
+          <Tab.Screen name="About" component={AboutScreen} />
+        </Tab.Navigator>
+      </NavigationContainer>
+    </SafeAreaProvider>
   );
 }
 
@@ -350,7 +368,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#fff' },
   topBar: {
     position: 'absolute',
-    top: 50,
+    top: 12,
     left: 16,
     right: 16,
     padding: 8,
@@ -363,7 +381,7 @@ const styles = StyleSheet.create({
   title: { fontSize: 18, fontWeight: '600' },
   status: {
     position: 'absolute',
-    bottom: 120,
+    bottom: 100,
     left: 16,
     right: 16,
     backgroundColor: 'rgba(255,255,255,0.9)',
@@ -383,12 +401,7 @@ const styles = StyleSheet.create({
   statCard: { width: '47%', backgroundColor: '#f6f7fb', borderRadius: 12, paddingVertical: 14, paddingHorizontal: 10, alignItems: 'center' },
   statValue: { fontSize: 22, fontWeight: '700', color: '#111' },
   statLabel: { fontSize: 11, color: '#666', marginTop: 4 },
-  tabBar: { position: 'absolute', left: 0, right: 0, bottom: 0, height: 70, backgroundColor: '#fff', borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: '#ddd', flexDirection: 'row', justifyContent: 'space-evenly', alignItems: 'center' },
-  tabBtn: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 12 },
-  tabBtnActive: { backgroundColor: '#f0f1f5' },
-  tabText: { fontSize: 12, color: '#666' },
-  tabTextActive: { color: '#111', fontWeight: '600' },
-  aboutWrap: { flex: 1, padding: 16, paddingBottom: 100 },
+  aboutWrap: { flex: 1, padding: 16 },
   aboutTitle: { fontSize: 22, fontWeight: '700', marginBottom: 8 },
   aboutText: { fontSize: 14, color: '#333', marginBottom: 8 },
 });

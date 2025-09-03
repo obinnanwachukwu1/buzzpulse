@@ -15,6 +15,12 @@ export default {
   async fetch(req: Request, env: Env): Promise<Response> {
     const url = new URL(req.url);
     try {
+      if (req.method === "POST" && url.pathname === "/device/register") {
+        return await handleDeviceRegister(env);
+      }
+      if (req.method === "POST" && url.pathname === "/vibe") {
+        return await handleVibe(req, env);
+      }
       if (req.method === "POST" && url.pathname === "/ingest") {
         return await handleIngest(req, env);
       }
@@ -36,7 +42,9 @@ export default {
 } satisfies ExportedHandler<Env>;
 
 async function handleIngest(req: Request, env: Env): Promise<Response> {
-  const body = (await req.json().catch(() => ({}))) as Partial<IngestBody>;
+  const raw = await req.text();
+  await requireAuth(req.headers, raw, env);
+  const body = (JSON.parse(raw || "{}")) as Partial<IngestBody>;
   const cellId = String(body.cellId || "").trim();
   if (!cellId) return json({ ok: false, error: "Missing cellId" }, 400);
   // Accept geohash (5-12) or building id with prefix b:slug
@@ -159,6 +167,10 @@ async function handleStats(url: URL, env: Env): Promise<Response> {
 
   const lastHour = await env.DB.prepare('select count(*) as cnt from hits where cell_id=? and ts>=?')
     .bind(cellId, oneHourAgo).first<{ cnt: number }>();
+  const vibesRows = await env.DB.prepare('select vibe, count(*) as c from vibes where cell_id=? and ts>=? group by vibe')
+    .bind(cellId, oneHourAgo).all<{ vibe: string; c: number }>();
+  const vibesLastHour: Record<string, number> = {};
+  for (const r of vibesRows.results ?? []) vibesLastHour[r.vibe] = Number(r.c || 0);
 
   // Typical: average count across past 7 days for current hour-of-day
   const hourStr = new Date(nowSec * 1000).toISOString().substring(11, 13); // UTC hour
@@ -190,7 +202,59 @@ async function handleStats(url: URL, env: Env): Promise<Response> {
     lastTs: cell?.lastTs ?? null,
     lastHourHits: lastHour?.cnt ?? 0,
     typicalHourAvgHits7d: typical?.avgCnt ?? 0,
+    vibesLastHour,
   };
   resp.deltaVsTypical = (resp.lastHourHits ?? 0) - (resp.typicalHourAvgHits7d ?? 0);
   return json(resp);
+}
+
+async function handleDeviceRegister(env: Env): Promise<Response> {
+  const deviceId = crypto.randomUUID();
+  const secretBytes = crypto.getRandomValues(new Uint8Array(32));
+  const secret = b64(secretBytes);
+  const now = Math.floor(Date.now() / 1000);
+  await env.DB.prepare('insert into devices (device_id, secret, created_at, last_seen) values (?, ?, ?, ?)')
+    .bind(deviceId, secret, now, now).run();
+  return json({ ok: true, deviceId, secret });
+}
+
+async function handleVibe(req: Request, env: Env): Promise<Response> {
+  const raw = await req.text();
+  await requireAuth(req.headers, raw, env);
+  const body = JSON.parse(raw || '{}') as { cellId?: string; vibe?: string; ts?: number };
+  const cellId = (body.cellId || '').trim();
+  const vibe = (body.vibe || '').trim();
+  if (!cellId || !vibe) return json({ ok: false, error: 'Missing cellId or vibe' }, 400);
+  const ts = Number.isFinite(body.ts) ? Math.floor(Number(body.ts)) : Math.floor(Date.now() / 1000);
+  await env.DB.prepare('insert into vibes (cell_id, vibe, ts, device_id) values (?, ?, ?, ?)')
+    .bind(cellId, vibe, ts, req.headers.get('x-device-id')).run();
+  return json({ ok: true });
+}
+
+async function requireAuth(h: Headers, body: string, env: Env): Promise<void> {
+  const id = h.get('x-device-id') || '';
+  const sig = (h.get('x-signature') || '').toLowerCase();
+  const tsStr = h.get('x-timestamp') || '';
+  const ts = parseInt(tsStr, 10);
+  if (!id || !sig || !Number.isFinite(ts)) throw new Error('Unauthorized');
+  const now = Math.floor(Date.now() / 1000);
+  if (Math.abs(now - ts) > 300) throw new Error('Stale signature');
+  const row = await env.DB.prepare('select secret, disabled from devices where device_id=?').bind(id).first<{ secret: string; disabled: number }>();
+  if (!row || row.disabled) throw new Error('Unauthorized');
+  const check = await sha256Hex(`${id}.${ts}.${body}.${row.secret}`);
+  if (check !== sig) throw new Error('Unauthorized');
+  await env.DB.prepare('update devices set last_seen=? where device_id=?').bind(now, id).run();
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const enc = new TextEncoder();
+  const hash = await crypto.subtle.digest('SHA-256', enc.encode(input));
+  const b = new Uint8Array(hash);
+  return [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+}
+
+function b64(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]!);
+  return btoa(s);
 }

@@ -1,7 +1,7 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, StyleSheet, Text, View, Switch } from 'react-native';
-import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType } from 'react-native-maps';
+import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType, MapPressEvent } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
 import { ingestHit } from './src/lib/ingest';
@@ -9,6 +9,18 @@ import campusMask from './assets/masks/campus.json';
 import { extractPolygons, pointInPolygon } from './src/lib/pip';
 import { BUILDINGS, findNearestBuilding } from './src/lib/buildings';
 import { fetchStats } from './src/lib/api';
+
+function haversineMeters(a: { latitude: number; longitude: number }, b: { latitude: number; longitude: number }) {
+  const R = 6371000;
+  const toRad = (x: number) => (x * Math.PI) / 180;
+  const dLat = toRad(b.latitude - a.latitude);
+  const dLon = toRad(b.longitude - a.longitude);
+  const lat1 = toRad(a.latitude);
+  const lat2 = toRad(b.latitude);
+  const sinDLat = Math.sin(dLat / 2), sinDLon = Math.sin(dLon / 2);
+  const h = sinDLat * sinDLat + Math.cos(lat1) * Math.cos(lat2) * sinDLon * sinDLon;
+  return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
+}
 
 export default function App() {
   const mapRef = useRef<MapView>(null);
@@ -27,6 +39,7 @@ export default function App() {
   const [mapType, setMapType] = useState<MapType>('standard');
   const [selectedBuilding, setSelectedBuilding] = useState<{ id: string; name: string } | null>(null);
   const [selectedStats, setSelectedStats] = useState<any>(null);
+  const SELECT_DISTANCE_M = 80;
 
   const campusPolys = useMemo(() => extractPolygons(campusMask), []);
   const campusPolysLatLng = useMemo(() =>
@@ -163,27 +176,47 @@ export default function App() {
           initialRegion={region}
           mapType={mapType}
           onRegionChangeComplete={onRegionChangeComplete}
+          onPress={(e: MapPressEvent) => {
+            const { latitude, longitude } = e.nativeEvent.coordinate;
+            const b = findNearestBuilding(latitude, longitude);
+            if (!b) return;
+            const d = haversineMeters({ latitude, longitude }, b.center);
+            if (d <= SELECT_DISTANCE_M) handleSelectBuilding(b.id, b.name);
+          }}
         >
-          {/* Inclusion zone overlays (toggled) */}
           {showMasks && (
             <>
               {campusPolysLatLng.map((coords, idx) => (
                 <Polygon key={`campus-${idx}`} coordinates={coords} strokeColor="#0066cc" strokeWidth={2} fillColor="rgba(0,102,204,0.07)" />
               ))}
-              {/* Building outlines (if included in dataset) */}
-              {BUILDINGS.map((b) => (
-                <Polygon
-                  key={`b-${b.id}`}
-                  coordinates={b.polygon}
-                  strokeColor="#333333"
-                  strokeWidth={1}
-                  fillColor="rgba(50,50,50,0.15)"
-                  tappable
-                  onPress={() => handleSelectBuilding(b.id, b.name)}
-                />
-              ))}
             </>
           )}
+
+          {BUILDINGS.map((b) => (
+            <Polygon
+              key={`b-${b.id}`}
+              coordinates={b.polygon}
+              strokeColor={showMasks ? '#333333' : 'transparent'}
+              strokeWidth={showMasks ? 1 : 0}
+              fillColor={showMasks ? 'rgba(50,50,50,0.15)' : 'transparent'}
+              tappable
+              onPress={() => handleSelectBuilding(b.id, b.name)}
+            />
+          ))}
+
+          {selectedBuilding && (() => {
+            const b = BUILDINGS.find(x => x.id === selectedBuilding.id);
+            if (!b) return null as any;
+            return (
+              <Polygon
+                key={`b-highlight-${b.id}`}
+                coordinates={b.polygon}
+                strokeColor="#ff6600"
+                strokeWidth={3}
+                fillColor="rgba(255,165,0,0.15)"
+              />
+            );
+          })()}
           {heat.map((h, idx) => (
             <Circle
               key={`${h.lat},${h.lng}-${idx}`}
@@ -225,6 +258,7 @@ export default function App() {
       {error ? <Text style={styles.error}>{error}</Text> : null}
       {selectedBuilding && (
         <View style={styles.sheet}>
+          <View style={styles.sheetHandle} />
           <Text style={styles.sheetTitle}>{selectedBuilding.name}</Text>
           {selectedStats ? (
             <>
@@ -238,7 +272,7 @@ export default function App() {
           ) : (
             <Text style={styles.sheetText}>Loading…</Text>
           )}
-          <View style={{ height: 8 }} />
+          <View style={{ height: 10 }} />
           <Button title="Close" onPress={() => { setSelectedBuilding(null); setSelectedStats(null); }} />
         </View>
       )}
@@ -287,4 +321,12 @@ const styles = StyleSheet.create({
   },
   sheetTitle: { fontSize: 16, fontWeight: '600', marginBottom: 6 },
   sheetText: { fontSize: 13, color: '#333' },
+  sheetHandle: {
+    alignSelf: 'center',
+    width: 36,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#ccc',
+    marginBottom: 10,
+  },
 });

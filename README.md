@@ -159,3 +159,25 @@ NOTE: EAS/dev-client requires an Expo account. For team members without accounts
 - Can’t react? Ensure Pulse is running so presence is fresh; presence window is 15 minutes. The sheet shows a hint if you aren’t present yet.
 - Native tabs not showing? Use a dev/standalone build; Expo Go falls back to JS tabs.
 - Device testing without paid Apple account: use Xcode free provisioning (open `app/ios/app.xcworkspace`, set Signing Team & bundle id, run on device) and `npx expo start --dev-client`.
+## CI/CD
+
+GitHub Actions are included for the Worker and Android release builds.
+
+- Worker deploy: `.github/workflows/worker-deploy.yml`
+  - Triggers on pushes to `main` that touch `worker/**` (or manually via “Run workflow”).
+  - Requires repository secret `CLOUDFLARE_API_TOKEN` with permissions to deploy the Worker and execute D1.
+  - Optional “migrate” job (manual) applies D1 SQL files in order.
+
+- Android release build: `.github/workflows/android-release.yml`
+  - Triggers on tag pushes (e.g., `v1.0.0`) or manual dispatch.
+  - Produces an AAB artifact (`app-release-bundle`).
+  - Optional signing: if you add these repo secrets, the job will embed signing config:
+    - `ANDROID_KEYSTORE_BASE64` (base64 of your keystore)
+    - `ANDROID_KEYSTORE_PASSWORD`
+    - `ANDROID_KEY_ALIAS`
+    - `ANDROID_KEY_ALIAS_PASSWORD`
+  - Without secrets, it still builds an unsigned AAB you can sign locally.
+
+Notes
+- Android build uses `expo prebuild` to generate the native project, then Gradle to build the release bundle.
+- iOS builds are not included (they require Apple signing on macOS runners). Use Xcode or EAS locally if needed.

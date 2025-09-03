@@ -1,0 +1,63 @@
+name: Build Android Release (Expo managed, prebuild)
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  android-aab:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Install dependencies
+        working-directory: app
+        run: npm ci
+
+      - name: Prebuild Android project
+        working-directory: app
+        run: npx expo prebuild -p android --non-interactive || npx expo prebuild -p android
+
+      - name: Configure signing (optional)
+        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        working-directory: app/android
+        run: |
+          echo "Setting up keystore from secrets"
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > app-upload.keystore
+          cat >> gradle.properties <<EOF
+          MYAPP_UPLOAD_STORE_FILE=app-upload.keystore
+          MYAPP_UPLOAD_STORE_PASSWORD=${ANDROID_KEYSTORE_PASSWORD}
+          MYAPP_UPLOAD_KEY_ALIAS=${ANDROID_KEY_ALIAS}
+          MYAPP_UPLOAD_KEY_PASSWORD=${ANDROID_KEY_ALIAS_PASSWORD}
+          EOF
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_ALIAS_PASSWORD: ${{ secrets.ANDROID_KEY_ALIAS_PASSWORD }}
+
+      - name: Build AAB
+        working-directory: app/android
+        run: |
+          ./gradlew bundleRelease
+
+      - name: Upload artifact (AAB)
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-release-bundle
+          path: app/android/app/build/outputs/bundle/release/app-release.aab
+

@@ -232,7 +232,14 @@ async function handleVibe(req: Request, env: Env): Promise<Response> {
   const cellId = (body.cellId || '').trim();
   const vibe = (body.vibe || '').trim();
   if (!cellId || !vibe) return json({ ok: false, error: 'Missing cellId or vibe' }, 400);
+  // Only allow building vibes
+  if (!/^b:[a-z0-9_-]+$/i.test(cellId)) return json({ ok: false, error: 'Vibes only allowed for buildings' }, 400);
   const ts = Number.isFinite(body.ts) ? Math.floor(Number(body.ts)) : Math.floor(Date.now() / 1000);
+  // Must be currently present at this building
+  const present = await env.DB.prepare('select cell_id from device_presence where device_id=? and updated_ts>=?')
+    .bind(deviceId, ts - PRESENCE_WINDOW_SEC)
+    .first<{ cell_id: string }>();
+  if (!present || present.cell_id !== cellId) return json({ ok: false, error: 'Not present at this building' }, 403);
   const hour = ts - (ts % 3600);
   await env.DB.prepare('insert into vibes (cell_id, vibe, ts, device_id, hour) values (?, ?, ?, ?, ?) on conflict(cell_id, device_id, hour) do update set vibe=excluded.vibe, ts=excluded.ts')
     .bind(cellId, vibe, ts, deviceId, hour).run();

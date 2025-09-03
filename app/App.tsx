@@ -20,6 +20,9 @@ if (!createBottomTabNavigator) {
 import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaProvider, SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import * as Haptics from 'expo-haptics';
+import { BlurView } from 'expo-blur';
+import { colors, radius } from './src/theme';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
 import { ingestHit } from './src/lib/ingest';
@@ -277,22 +280,22 @@ function MapScreen() {
           ))}
         </MapView>
       )}
-      <View style={[styles.topBar, { top: insets.top + 8 }]}>
+      <BlurView intensity={50} tint={Platform.OS === 'ios' ? ('systemChromeMaterial' as any) : 'light'} style={[styles.topBar, { top: insets.top + 8 }] }>
         <Text style={styles.title}>BuzzPulse</Text>
-        <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>
-          {pulsing ? (
-            <Button title="Stop Pulse" onPress={stopPulse} />
-          ) : (
-            <Button title="Start Pulse" onPress={startPulse} />
-          )}
-        </View>
-      </View>
+        <Pressable
+          onPress={async () => { if (pulsing) { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); stopPulse(); } else { await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); startPulse(); } }}
+          style={({ pressed }) => [styles.pillBtn, { opacity: pressed ? 0.9 : 1 }]}
+        >
+          <Ionicons name={pulsing ? 'pause' : 'play'} size={16} color={'#fff'} />
+          <Text style={styles.pillBtnText}>{pulsing ? 'Stop' : 'Start'}</Text>
+        </Pressable>
+      </BlurView>
       {showStats && (
-        <View style={[styles.status, { bottom: insets.bottom + 12 }]}>
+        <BlurView intensity={40} tint={Platform.OS === 'ios' ? ('systemThinMaterial' as any) : 'light'} style={[styles.status, { bottom: insets.bottom + 8 }] }>
           <Text style={styles.statusText}>Pulses sent: {pulseCount}</Text>
-          <Text style={styles.statusText}>Dropped (outside zones): {droppedCount}</Text>
-          <Text style={styles.statusText}>Last upload: {lastUpload ?? '—'}</Text>
-        </View>
+          <Text style={styles.statusText}>Dropped: {droppedCount}</Text>
+          <Text style={styles.statusText}>Last: {lastUpload ?? '—'}</Text>
+        </BlurView>
       )}
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <Modal
@@ -407,8 +410,8 @@ const styles = StyleSheet.create({
     left: 16,
     right: 16,
     padding: 8,
-    backgroundColor: 'rgba(255,255,255,0.9)',
-    borderRadius: 8,
+    backgroundColor: 'transparent',
+    borderRadius: 14,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
@@ -419,9 +422,9 @@ const styles = StyleSheet.create({
     bottom: 100,
     left: 16,
     right: 16,
-    backgroundColor: 'rgba(255,255,255,0.9)',
+    backgroundColor: 'transparent',
     padding: 8,
-    borderRadius: 8,
+    borderRadius: 14,
   },
   statusText: { fontSize: 12, color: '#333' },
   error: { position: 'absolute', bottom: 20, left: 16, right: 16, color: 'crimson' },
@@ -439,4 +442,6 @@ const styles = StyleSheet.create({
   aboutWrap: { flex: 1, padding: 16 },
   aboutTitle: { fontSize: 22, fontWeight: '700', marginBottom: 8 },
   aboutText: { fontSize: 14, color: '#333', marginBottom: 8 },
+  pillBtn: { backgroundColor: '#0A84FF', borderRadius: 22, paddingHorizontal: 12, height: 34, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  pillBtnText: { color: '#fff', fontSize: 14, fontWeight: '600' },
 });

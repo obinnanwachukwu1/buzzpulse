@@ -1,11 +1,14 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Button, StyleSheet, Text, View } from 'react-native';
-import MapView, { Circle, MapViewProps, PROVIDER_DEFAULT, Region } from 'react-native-maps';
+import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
 import { encode as encodeGeohash } from './src/lib/geohash';
 import { ingestHit } from './src/lib/ingest';
+import campusMask from './assets/masks/campus.json';
+import residentialMask from './assets/masks/residential.json';
+import { extractPolygons, pointInPolygon } from './src/lib/pip';
 
 export default function App() {
   const mapRef = useRef<MapView>(null);
@@ -17,6 +20,18 @@ export default function App() {
   const [pulseCount, setPulseCount] = useState(0);
   const [lastUpload, setLastUpload] = useState<string | null>(null);
   const pulseTimer = useRef<NodeJS.Timer | null>(null);
+  const [droppedCount, setDroppedCount] = useState(0);
+
+  const campusPolys = useMemo(() => extractPolygons(campusMask), []);
+  const residentialPolys = useMemo(() => extractPolygons(residentialMask), []);
+  const campusPolysLatLng = useMemo(() =>
+    campusPolys.map((poly) => poly.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))),
+    [campusPolys]
+  );
+  const residentialPolysLatLng = useMemo(() =>
+    residentialPolys.map((poly) => poly.map(([lng, lat]) => ({ latitude: lat, longitude: lng }))),
+    [residentialPolys]
+  );
 
   // Default: a campus-ish location (Stanford Main Quad)
   const defaultRegion: Region = useMemo(
@@ -86,7 +101,18 @@ export default function App() {
   const sampleAndSend = async () => {
     try {
       const loc = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.Balanced });
-      const cellId = encodeGeohash(loc.coords.latitude, loc.coords.longitude, 7);
+      const { latitude, longitude } = loc.coords;
+      const pt: [number, number] = [longitude, latitude];
+
+      // Fence to campus and skip residential
+      const inCampus = campusPolys.length === 0 || campusPolys.some((poly) => pointInPolygon(pt, poly));
+      const inResidential = residentialPolys.some((poly) => pointInPolygon(pt, poly));
+      if (!inCampus || inResidential) {
+        setDroppedCount((c) => c + 1);
+        return; // do not send
+      }
+
+      const cellId = encodeGeohash(latitude, longitude, 7);
       const ts = Math.floor(Date.now() / 1000);
       await ingestHit(cellId, ts);
       setPulseCount((c) => c + 1);
@@ -118,6 +144,14 @@ export default function App() {
           initialRegion={region}
           onRegionChangeComplete={onRegionChangeComplete}
         >
+          {/* Campus outline */}
+          {campusPolysLatLng.map((coords, idx) => (
+            <Polygon key={`campus-${idx}`} coordinates={coords} strokeColor="#0066cc" strokeWidth={2} fillColor="rgba(0,102,204,0.07)" />
+          ))}
+          {/* Residential masks */}
+          {residentialPolysLatLng.map((coords, idx) => (
+            <Polygon key={`res-${idx}`} coordinates={coords} strokeColor="#666666" strokeWidth={1} fillColor="rgba(120,120,120,0.25)" />
+          ))}
           {heat.map((h, idx) => (
             <Circle
               key={`${h.lat},${h.lng}-${idx}`}
@@ -141,7 +175,8 @@ export default function App() {
         </View>
       </View>
       <View style={styles.status}>
-        <Text style={styles.statusText}>Pulses sent: {pulseCount}</Text>
+        <Text style={styles.statusText}>Pulses sent (public): {pulseCount}</Text>
+        <Text style={styles.statusText}>Dropped (private/residential): {droppedCount}</Text>
         <Text style={styles.statusText}>Last upload: {lastUpload ?? '—'}</Text>
       </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}

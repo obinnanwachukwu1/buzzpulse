@@ -1,0 +1,22 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "name": "Campus" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [-122.1765, 37.4220],
+            [-122.1765, 37.4370],
+            [-122.1590, 37.4370],
+            [-122.1590, 37.4220],
+            [-122.1765, 37.4220]
+          ]
+        ]
+      }
+    }
+  ]
+}
+

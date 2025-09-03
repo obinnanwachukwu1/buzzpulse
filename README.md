@@ -115,19 +115,20 @@ wrangler d1 execute buzzpulse_db --file ./migrations/0001_init.sql
 wrangler d1 execute buzzpulse_db --file ./migrations/0002_auth_vibes.sql
 wrangler d1 execute buzzpulse_db --file ./migrations/0003_presence.sql
 wrangler d1 execute buzzpulse_db --file ./migrations/0004_vibes_unique.sql
+wrangler d1 execute buzzpulse_db --file ./migrations/0005_hits_unique.sql
 wrangler deploy
 ```
 
-Expo App (local dev)
+Expo App (local dev — Expo Go by default)
 
 ```bash
 cd app
 npm i
 # Set API URL in app/app.json → expo.extra.API_BASE_URL (use your workers.dev URL)
-npx expo start  # Expo Go (JS tabs fallback) or dev client below
+npx expo start  # Expo Go (no login required)
 ```
 
-Dev/Standalone build for native iOS tabs
+Optional: Dev/Standalone build for native iOS tabs
 
 ```bash
 cd app
@@ -135,8 +136,7 @@ npx expo prebuild -p ios
 npx pod-install
 npx expo run:ios --device  # or build with EAS
 # EAS (requires Apple account):
-npx eas-cli@latest build --profile development --platform ios
-npx expo start --dev-client
+NOTE: EAS/dev-client requires an Expo account. For team members without accounts, stick to Expo Go and skip this section.
 ```
 
 ## App UX
@@ -159,4 +159,3 @@ npx expo start --dev-client
 - Can’t react? Ensure Pulse is running so presence is fresh; presence window is 15 minutes. The sheet shows a hint if you aren’t present yet.
 - Native tabs not showing? Use a dev/standalone build; Expo Go falls back to JS tabs.
 - Device testing without paid Apple account: use Xcode free provisioning (open `app/ios/app.xcworkspace`, set Signing Team & bundle id, run on device) and `npx expo start --dev-client`.
-

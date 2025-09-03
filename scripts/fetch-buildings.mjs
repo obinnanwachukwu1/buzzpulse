@@ -79,7 +79,9 @@ async function main() {
 
   const body = `
   [out:json][timeout:180];
+  (
   ${rings.map(overpassQueryForRing).join('\n')}
+  );
   out body; >; out skel qt;`;
 
   console.log('Querying Overpass with', rings.length, 'ring(s)…');

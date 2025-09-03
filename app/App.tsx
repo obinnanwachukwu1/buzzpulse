@@ -4,10 +4,11 @@ import { Button, StyleSheet, Text, View, Switch } from 'react-native';
 import MapView, { Circle, Polygon, MapViewProps, PROVIDER_DEFAULT, Region, MapType } from 'react-native-maps';
 import * as Location from 'expo-location';
 import { fetchHeat, HeatPoint } from './src/lib/api';
-import { encode as encodeGeohash } from './src/lib/geohash';
 import { ingestHit } from './src/lib/ingest';
 import campusMask from './assets/masks/campus.json';
 import { extractPolygons, pointInPolygon } from './src/lib/pip';
+import { BUILDINGS, findNearestBuilding } from './src/lib/buildings';
+import { fetchStats } from './src/lib/api';
 
 export default function App() {
   const mapRef = useRef<MapView>(null);
@@ -24,6 +25,8 @@ export default function App() {
   // Include-only filter: only send hits inside campus polygons
   const [filterEnabled, setFilterEnabled] = useState(true);
   const [mapType, setMapType] = useState<MapType>('standard');
+  const [selectedBuilding, setSelectedBuilding] = useState<{ id: string; name: string } | null>(null);
+  const [selectedStats, setSelectedStats] = useState<any>(null);
 
   const campusPolys = useMemo(() => extractPolygons(campusMask), []);
   const campusPolysLatLng = useMemo(() =>
@@ -80,6 +83,17 @@ export default function App() {
     }
   };
 
+  const handleSelectBuilding = async (id: string, name: string) => {
+    setSelectedBuilding({ id, name });
+    setSelectedStats(null);
+    try {
+      const stats = await fetchStats(`b:${id}`);
+      setSelectedStats(stats);
+    } catch (e: any) {
+      setSelectedStats({ error: e?.message ?? String(e) });
+    }
+  };
+
   const startPulse = async () => {
     if (pulsing) return;
     setPulsing(true);
@@ -111,7 +125,13 @@ export default function App() {
         }
       }
 
-      const cellId = encodeGeohash(latitude, longitude, 7);
+      // Pick nearest building center; send building-based cellId
+      const b = findNearestBuilding(latitude, longitude);
+      if (!b) {
+        setDroppedCount((c) => c + 1);
+        return;
+      }
+      const cellId = `b:${b.id}`;
       const ts = Math.floor(Date.now() / 1000);
       await ingestHit(cellId, ts);
       setPulseCount((c) => c + 1);
@@ -149,6 +169,18 @@ export default function App() {
             <>
               {campusPolysLatLng.map((coords, idx) => (
                 <Polygon key={`campus-${idx}`} coordinates={coords} strokeColor="#0066cc" strokeWidth={2} fillColor="rgba(0,102,204,0.07)" />
+              ))}
+              {/* Building outlines (if included in dataset) */}
+              {BUILDINGS.map((b) => (
+                <Polygon
+                  key={`b-${b.id}`}
+                  coordinates={b.polygon}
+                  strokeColor="#333333"
+                  strokeWidth={1}
+                  fillColor="rgba(50,50,50,0.15)"
+                  tappable
+                  onPress={() => handleSelectBuilding(b.id, b.name)}
+                />
               ))}
             </>
           )}
@@ -191,6 +223,25 @@ export default function App() {
         </View>
       </View>
       {error ? <Text style={styles.error}>{error}</Text> : null}
+      {selectedBuilding && (
+        <View style={styles.sheet}>
+          <Text style={styles.sheetTitle}>{selectedBuilding.name}</Text>
+          {selectedStats ? (
+            <>
+              <Text style={styles.sheetText}>Current score: {selectedStats.currentScore?.toFixed?.(2) ?? selectedStats.currentScore}</Text>
+              <Text style={styles.sheetText}>Hits last hour: {selectedStats.lastHourHits}</Text>
+              <Text style={styles.sheetText}>Typical (this hour, 7d avg): {Number(selectedStats.typicalHourAvgHits7d ?? 0).toFixed(1)}</Text>
+              {typeof selectedStats.deltaVsTypical === 'number' && (
+                <Text style={styles.sheetText}>Delta vs typical: {selectedStats.deltaVsTypical > 0 ? '+' : ''}{Number(selectedStats.deltaVsTypical).toFixed(1)}</Text>
+              )}
+            </>
+          ) : (
+            <Text style={styles.sheetText}>Loading…</Text>
+          )}
+          <View style={{ height: 8 }} />
+          <Button title="Close" onPress={() => { setSelectedBuilding(null); setSelectedStats(null); }} />
+        </View>
+      )}
       <StatusBar style="dark" />
     </View>
   );
@@ -222,4 +273,18 @@ const styles = StyleSheet.create({
   },
   statusText: { fontSize: 12, color: '#333' },
   error: { position: 'absolute', bottom: 20, left: 16, right: 16, color: 'crimson' },
+  sheet: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    bottom: 20,
+    backgroundColor: 'white',
+    padding: 12,
+    borderRadius: 10,
+    shadowColor: '#000',
+    shadowOpacity: 0.2,
+    shadowRadius: 8,
+  },
+  sheetTitle: { fontSize: 16, fontWeight: '600', marginBottom: 6 },
+  sheetText: { fontSize: 13, color: '#333' },
 });

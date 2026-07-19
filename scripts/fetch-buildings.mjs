@@ -95,7 +95,7 @@ async function main() {
     process.exit(2);
   }
   const osm = await res.json();
-  const gj = osmtogeojson(osm);
+  const gj = osmtogeojson(osm, { flatProperties: false });
 
   // Keep only polygonal buildings
   const features = (gj.features || []).filter(f => ['Polygon','MultiPolygon'].includes(f.geometry?.type));

@@ -4,6 +4,9 @@
   "type": "module",
   "dependencies": {
     "node-fetch": "^3.3.2",
-    "osmtogeojson": "^2.2.12"
+    "osmtogeojson": "^3.0.0-beta.5"
+  },
+  "overrides": {
+    "@xmldom/xmldom": "0.8.13"
   }
 }

@@ -9,9 +9,9 @@
     "fmt": "prettier --write ."
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20260722.1",
+    "@cloudflare/workers-types": "5.20260801.1",
     "prettier": "^3.3.3",
     "typescript": "^5.5.4",
-    "wrangler": "^4.114.0"
+    "wrangler": "^4.120.0"
   }
 }
